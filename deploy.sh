@@ -146,15 +146,31 @@ fi
 OLLAMA_MODEL=$(env_val APP_OLLAMA_MODEL); OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5:7b-instruct}
 
 ollama_using_gpu() {
-  # Carga el modelo con una generación mínima y consulta el procesador
-  # que reporta `ollama ps` ("100% GPU" vs "100% CPU").
+  # Carga el modelo con una generación mínima vía la API HTTP (sin modo
+  # interactivo) y consulta el procesador que reporta `ollama ps`
+  # ("100% GPU" vs "100% CPU").
   if ! docker compose exec -T ollama ollama list 2>/dev/null | grep -q "$OLLAMA_MODEL"; then
     log "Modelo $OLLAMA_MODEL no instalado — se omite la verificación de GPU"
     return 0
   fi
-  docker compose exec -T ollama ollama run "$OLLAMA_MODEL" "ok" >/dev/null 2>&1 || true
-  sleep 3
-  docker compose exec -T ollama ollama ps 2>/dev/null | grep -qi "gpu"
+  docker compose exec -T app python - "$OLLAMA_MODEL" <<'PY' >/dev/null 2>&1 || true
+import sys
+import httpx
+
+model = sys.argv[1]
+httpx.post(
+    "http://ollama:11434/api/generate",
+    json={"model": model, "prompt": "ok", "stream": False,
+          "options": {"num_predict": 1}},
+    timeout=600.0,
+)
+PY
+  sleep 2
+  local ps_out
+  ps_out=$(docker compose exec -T ollama ollama ps 2>/dev/null)
+  # Si el modelo no llegó a cargar no se puede concluir: se mantiene la GPU.
+  echo "$ps_out" | grep -q "$OLLAMA_MODEL" || return 0
+  echo "$ps_out" | grep -qi "gpu"
 }
 
 if [ "$USE_GPU" = "1" ] && [ "${SKIP_GPU_CHECK:-0}" != "1" ]; then
