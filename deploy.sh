@@ -198,11 +198,20 @@ else
 fi
 
 # Los workflows quedan inactivos tras importar (y pueden estarlo de un
-# deploy anterior). Activarlos siempre, uno por uno — update:workflow no
-# soporta --all. Sin esto los webhooks dan 404 y el pipeline nunca arranca.
+# deploy anterior). Activarlos siempre, uno por uno.
 for wf_id in $(docker compose exec -T n8n n8n list:workflow 2>/dev/null | grep '|' | cut -d'|' -f1); do
   docker compose exec -T n8n n8n update:workflow --id="$wf_id" --active=true >/dev/null 2>&1 \
     || warn "No se pudo activar el workflow $wf_id — activalo en la UI de n8n"
+done
+
+# La activación por CLI solo marca la DB; los webhooks se registran al
+# arrancar n8n. Sin el restart los endpoints siguen devolviendo 404.
+log "Reiniciando n8n para registrar los webhooks"
+docker compose restart n8n >/dev/null
+for i in $(seq 1 36); do
+  status=$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q n8n)" 2>/dev/null || echo starting)
+  [ "$status" = "healthy" ] && break
+  sleep 5
 done
 
 # Verificar que los webhooks respondan (404 = workflow inactivo)
