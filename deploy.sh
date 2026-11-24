@@ -30,8 +30,11 @@ regen_paperless_token() {
   user=$(env_val PAPERLESS_ADMIN_USER); user=${user:-admin}
   pass=$(env_val PAPERLESS_ADMIN_PASSWORD)
   [ -n "$pass" ] || { warn "PAPERLESS_ADMIN_PASSWORD no está en .env"; return 1; }
-  token=$(curl -fsS -u "$user:$pass" -X POST \
+  # Paperless >= 3.x exige username/password en el body JSON de /api/token/
+  token=$(curl -fsS -X POST \
     "http://localhost:9090/api/token/" \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"$user\",\"password\":\"$pass\"}" \
     | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])') || return 1
   [ -n "$token" ] || return 1
   sed -i "s|^APP_PAPERLESS_TOKEN=.*|APP_PAPERLESS_TOKEN=$token|" .env
