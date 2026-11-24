@@ -193,12 +193,28 @@ if [ "$EXISTING" = "0" ]; then
     docker compose cp "$wf" "n8n:/tmp/$(basename "$wf")" >/dev/null
     docker compose exec -T n8n n8n import:workflow --input="/tmp/$(basename "$wf")" 2>&1 | tail -1
   done
-  # Activar todos los workflows importados
-  docker compose exec -T n8n n8n update:workflow --all --active=true >/dev/null 2>&1 \
-    || warn "No se pudieron activar los workflows por CLI — activalos en la UI de n8n"
+  # Los workflows importados quedan inactivos; activarlos uno por uno
+  # (update:workflow no soporta --all). Sin esto los webhooks dan 404 y el
+  # pipeline nunca arranca.
+  for wf_id in $(docker compose exec -T n8n n8n list:workflow 2>/dev/null | grep '|' | cut -d'|' -f1); do
+    docker compose exec -T n8n n8n update:workflow --id="$wf_id" --active=true >/dev/null 2>&1 \
+      || warn "No se pudo activar el workflow $wf_id — activalo en la UI de n8n"
+  done
 else
   log "n8n ya tiene workflows importados — se omite"
 fi
+
+# Verificar que los webhooks respondan (404 = workflow inactivo)
+sleep 3
+for hook in process-document report-job; do
+  code=$(curl -s -o /dev/null -w '%{http_code}' -m 10 -X POST \
+    "http://localhost:5678/webhook/$hook" -H 'Content-Type: application/json' -d '{}')
+  if [ "$code" = "404" ]; then
+    warn "Webhook /webhook/$hook devuelve 404 — el workflow está inactivo"
+  else
+    log "Webhook /webhook/$hook responde ($code)"
+  fi
+done
 
 # --------------------------------------------------------------- verificación
 log "Verificación final"
