@@ -1,0 +1,117 @@
+# Spec Delta
+
+## Purpose
+
+Give operators a queue and detail view to verify, correct, approve, reject, or reprocess extracted certificates, while keeping an auditable history of every manual change.
+
+## ADDED Requirements
+
+### Requirement: Review queue with document states
+The system SHALL provide a list of uploaded documents that distinguishes processed, pending-review, approved, rejected, and error states, and SHALL let users filter that list by state.
+
+#### Scenario: Documents grouped by state
+- **WHEN** a user opens the document list
+- **THEN** each document shows its current review state
+- **AND** the user can filter the list to processed, pending, approved, rejected, or error documents
+
+#### Scenario: Error state visible
+- **WHEN** processing fails for a document
+- **THEN** the document appears in the error state with the failure reason available
+
+### Requirement: Review detail with original document
+The system SHALL show the original document alongside its extracted data, including an indicator of whether text came from embedded PDF text or OCR and warnings for fields that require review.
+
+#### Scenario: Side-by-side review
+- **WHEN** a reviewer opens a record pending review
+- **THEN** the original document and the extracted fields are visible together
+
+#### Scenario: Field warnings displayed
+- **WHEN** the entity, level, or date requires review
+- **THEN** the record displays a clear warning for each affected field
+
+### Requirement: Manual correction of extracted data
+The system SHALL let an authorized reviewer edit extracted fields and SHALL preserve the previously stored values in the change history.
+
+#### Scenario: Reviewer edits a value
+- **WHEN** a reviewer changes an extracted field and saves
+- **THEN** the corrected value becomes the record's current value
+- **AND** the previous value, reviewer, and timestamp are recorded in the history
+
+#### Scenario: Required fields validated
+- **WHEN** a reviewer attempts to approve a record that lacks a required field
+- **THEN** the system prevents approval and identifies the missing field
+
+### Requirement: Approve and reject records
+The system SHALL let an authorized reviewer approve or reject a record, and SHALL record the decision with its actor and timestamp.
+
+#### Scenario: Approval makes record reportable
+- **WHEN** a reviewer approves a record
+- **THEN** the record is eligible for inclusion in the main Excel report
+
+#### Scenario: Rejection excludes record
+- **WHEN** a reviewer rejects a record
+- **THEN** the record is excluded from the main Excel report
+- **AND** the rejection and its reason are recorded
+
+### Requirement: Reprocess a document without duplicating it
+The system SHALL let an authorized user reprocess a document, SHALL reuse the existing document record, and SHALL record the reprocessing event.
+
+#### Scenario: Reprocessing updates the existing record
+- **WHEN** a user requests reprocessing of a document
+- **THEN** the pipeline runs again against the same document record
+- **AND** no duplicate document or certificate record is created
+
+#### Scenario: Previous values preserved in history
+- **WHEN** reprocessing replaces extracted values
+- **THEN** the values replaced by the new run remain available in the history
+- **AND** the record returns to pending review
+
+### Requirement: Audit history of changes and reprocessing
+The system SHALL maintain a history of manual edits and reprocessing events for each record.
+
+#### Scenario: History entry content
+- **WHEN** a manual edit or reprocessing event occurs
+- **THEN** the history records the event type, actor, timestamp, and affected previous and new values
+
+#### Scenario: History is viewable
+- **WHEN** a reviewer opens a record's history
+- **THEN** the recorded changes and reprocessing events are displayed in chronological order
+
+### Requirement: Search certificate data
+The system SHALL let users search and filter records by student name, language, entity, level, and issue date.
+
+#### Scenario: Search by student
+- **WHEN** a user searches for part of a student name
+- **THEN** matching certificate records are returned
+
+#### Scenario: Combined filters
+- **WHEN** a user combines language, entity, level, and issue-date filters
+- **THEN** the results satisfy all selected filters
+
+### Requirement: Route unrecognized documents to a manual-review label
+The system SHALL apply a configurable document-store label, `Otros` by default, to documents that are not identified as language certificates, whose language or certifying entity cannot be resolved, or whose processing fails, and SHALL keep those documents in the manual-review queue. The system SHALL remove the label when the record is approved.
+
+#### Scenario: Non-certificate document labeled for review
+- **WHEN** extraction determines that an uploaded document is not a language certificate
+- **THEN** the system applies the configured manual-review label to the original in the document store
+- **AND** the document remains available in the review queue
+
+#### Scenario: Unresolved language or entity labeled for review
+- **WHEN** a certificate's language or certifying entity cannot be resolved against the catalog
+- **THEN** the system applies the configured manual-review label
+- **AND** the record is routed to manual identification
+
+#### Scenario: Processing failure labeled for review
+- **WHEN** text acquisition, extraction, or classification fails for a stored document
+- **THEN** the system applies the configured manual-review label
+- **AND** the document remains visible in the error state with its failure reason
+
+#### Scenario: Approval clears the manual-review label
+- **WHEN** a reviewer approves a record that carries the manual-review label
+- **THEN** the system removes the label from the original document
+- **AND** the approved record remains reportable
+
+#### Scenario: Labeling failure does not block review
+- **WHEN** the document store cannot apply or remove the label
+- **THEN** the system records the failure and keeps the document in the review queue
+- **AND** the processing result is not discarded

@@ -1,0 +1,12 @@
+.venv
+.git
+.gitignore
+.ruff_cache
+__pycache__
+*.pyc
+var
+staticfiles
+openspec
+node_modules
+*.sqlite3
+.env

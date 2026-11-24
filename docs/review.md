@@ -1,0 +1,119 @@
+# Review workflow and audit
+
+Every extracted certificate enters `pending_review`. A reviewer verifies the
+data against the original, corrects it if needed, and approves or rejects it.
+Only approved records enter the main Excel report.
+
+## Queue and filters
+
+`/documents/` lists all documents with pagination (25 per page) and filters:
+
+- **Estado**: procesados, pendientes de revisión, aprobados, rechazados, error.
+- **Buscar**: student name or original filename (partial, case-insensitive).
+- **Idioma / Entidad**: catalog entry or literal text.
+- **Nivel**: CEFR level or literal level text.
+- **Fecha de expedición**: exact date (`YYYY-MM-DD`).
+
+Filters combine with AND semantics. The same filters (plus an
+**Organismo emisor** text filter) are available in the gallery.
+
+## Gallery and bulk review
+
+`/documents/gallery/` shows certificate documents as a visual grid: each card
+renders the original image (or a placeholder for PDFs), the student name,
+language, certifying entity, level, and UV L2 equivalence. Clicking a card
+opens the review detail page.
+
+Reviewers can tick several cards and apply a bulk action — **Validar** or
+**Aprobar** — via `POST /documents/bulk-review/`. Each document goes through
+the same `validate_certificate`/`approve_certificate` services as the
+single-record buttons, so required-field checks and audit events apply per
+record; failures are reported per file in the flash messages. The bulk action
+preserves the active gallery filters on redirect.
+
+## Detail view
+
+`/documents/<id>/` shows the document metadata (filename, processing state,
+text method `embedded`/`ocr`/`mixed`, page count, fingerprint), a link to the
+original in Paperless-ngx, the extracted fields with per-field evidence
+quotes, review warnings mapped from review reasons, and the review actions.
+
+The detail page offers **Anterior/Siguiente** buttons that walk the
+pending-review queue (ordered by upload date), plus a link back to the
+filtered pending list.
+
+Field warnings:
+
+| Reason | Warning |
+| --- | --- |
+| `unknown_language` | Idioma no identificado |
+| `unknown_entity` | Entidad pendiente de identificar |
+| `ambiguous_date` | Fecha ambigua o sin categoría |
+| `low_confidence` | Confianza baja |
+| `missing_essential_fields` | Faltan campos obligatorios |
+| `multiple_certificates` | Posibles múltiples certificados |
+| `non_certificate` | No parece un certificado de idioma |
+
+## Manual editing
+
+Reviewers (and admins) edit directly on the detail page: the extracted-data
+table shows an **Editar** button that swaps every value cell for the
+corresponding input (catalog selects for language/entity/exam plus literal
+text fields, dates, CEFR level, equivalence) without duplicating the values
+in a second form. **Guardar cambios** submits to the same edit endpoint;
+**Cancelar** returns to the read view. Viewers always see the read-only
+table.
+
+Editable fields: literals, catalog
+selections (language, entity, exam), CEFR level, all four dates, and the
+certificate code. Dates are validated as `YYYY-MM-DD`. Manual CEFR edits set
+`cefr_source = manual`.
+
+Each change writes a `ReviewEvent` of type `edit` capturing the actor,
+timestamp, and before/after values for every changed field.
+
+## Approve and reject
+
+- **Approve** requires `viewer`-less roles (`reviewer`/`admin`) and all
+  required fields: student name, resolved language, resolved entity, level
+  or score, and issue date. Missing fields block approval and are listed in
+  the error message. Approval sets `review_status = approved`, moves the
+  document to `approved`, records an `approve` event, and removes the
+  `Otros` Paperless label.
+- **Reject** requires a non-empty reason. It sets `review_status =
+  rejected`, moves the document to `rejected`, and records a `reject` event
+  with the reason.
+
+Viewers can read everything but cannot edit, approve, reject, or reprocess
+(HTTP 403).
+
+## Reprocess
+
+Reprocessing resets the document to `stored` (pages are kept; the pipeline
+re-runs text acquisition, extraction, and classification), returns the
+certificate to `pending`, clears the error reason, records a `reprocess`
+event, and notifies the n8n processing webhook when
+`APP_N8N_PROCESSING_WEBHOOK_URL` is configured. No duplicate document or
+certificate rows are created; previous values remain in the event history.
+
+## History
+
+`/documents/<id>/history/` lists every `ReviewEvent` (edit, approve,
+reject, reprocess) in chronological order with actor, timestamp, reason, and
+the before/after payloads.
+
+## Validated state
+
+Reviewers can mark a pending certificate as `validated` ("Validado") via
+`POST /documents/<id>/validate/`. Validation records a `validate` audit
+event and signals that a human checked the extracted values, but the
+document stays in `pending_review` and out of the approved report sheet
+until it is approved. Validated records appear in the report's
+"Pendientes de revisión" sheet with status "Validado".
+
+## In-app document viewer
+
+`GET /documents/<id>/original/` streams the original file from Paperless
+through Django (authenticated, viewer role or above) with the detected
+content type, so reviewers can inspect the document inside the review page
+without logging into Paperless. The detail page embeds it in an iframe.

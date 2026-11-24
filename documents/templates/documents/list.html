@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Documentos · Certificados de idiomas{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+  <section class="panel">
+    <h1>Documentos</h1>
+
+    <form method="get" class="filters">
+      <p>
+        <label for="f-state">Estado</label>
+        <select id="f-state" name="state">
+          <option value="">Todos</option>
+          <option value="processed" {% if state == "processed" %}selected{% endif %}>Procesados</option>
+          <option value="pending" {% if state == "pending" %}selected{% endif %}>Pendientes de revisión</option>
+          <option value="approved" {% if state == "approved" %}selected{% endif %}>Aprobados</option>
+          <option value="rejected" {% if state == "rejected" %}selected{% endif %}>Rechazados</option>
+          <option value="error" {% if state == "error" %}selected{% endif %}>Error</option>
+        </select>
+      </p>
+      <p>
+        <label for="f-q">Buscar</label>
+        <input id="f-q" name="q" type="search" value="{{ query }}" placeholder="Alumno o archivo">
+      </p>
+      <p>
+        <label for="f-language">Idioma</label>
+        <select id="f-language" name="language">
+          <option value="">Todos</option>
+          {% for item in languages %}
+            <option value="{{ item.pk }}" {% if language == item.pk|stringformat:"s" %}selected{% endif %}>{{ item.name }}</option>
+          {% endfor %}
+        </select>
+      </p>
+      <p>
+        <label for="f-entity">Entidad</label>
+        <select id="f-entity" name="entity">
+          <option value="">Todas</option>
+          {% for item in entities %}
+            <option value="{{ item.pk }}" {% if entity == item.pk|stringformat:"s" %}selected{% endif %}>{{ item.name }}</option>
+          {% endfor %}
+        </select>
+      </p>
+      <p>
+        <label for="f-level">Nivel</label>
+        <input id="f-level" name="level" type="text" value="{{ level }}" placeholder="B2, A1, ...">
+      </p>
+      <p>
+        <label for="f-issue-date">Fecha de expedición</label>
+        <input id="f-issue-date" name="issue_date" type="date" value="{{ issue_date }}">
+      </p>
+      <button type="submit" class="button">Filtrar</button>
+      <a href="{% url 'documents:list' %}">Limpiar</a>
+    </form>
+
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Archivo</th>
+          <th>Alumno</th>
+          <th>Idioma</th>
+          <th>Entidad</th>
+          <th>Examen</th>
+          <th>Puntuación</th>
+          <th>Nivel</th>
+          <th>Equiv. UV</th>
+          <th>Fecha expedición</th>
+          <th>Organismo emisor</th>
+          <th>Estado</th>
+          <th>Subido</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for document in page %}
+          {% with certificate=document.certificate %}
+          <tr>
+            <td><a href="{% url 'documents:detail' document.pk %}">{{ document.original_filename }}</a></td>
+            {% if certificate %}
+              <td>{{ certificate.student_name|default:"—" }}</td>
+              <td>{{ certificate.language.name|default:certificate.language_literal|default:"—" }}</td>
+              <td>{{ certificate.entity.name|default:certificate.entity_literal|default:"—" }}</td>
+              <td>{{ certificate.exam.name|default:certificate.exam_literal|default:"—" }}</td>
+              <td>{{ certificate.score_literal|default:"—" }}</td>
+              <td>{{ certificate.cefr_level|default:certificate.level_literal|default:"—" }}</td>
+              <td class="has-tip" data-tip="{{ certificate.equivalence_tip }}">
+                {% if certificate.equivalence_rule_pk %}
+                  <a href="{% url 'catalog:equivalences' %}#eq-{{ certificate.equivalence_rule_pk }}">{{ certificate.equivalence }}</a>
+                {% else %}
+                  {{ certificate.equivalence|default:"—" }}
+                {% endif %}
+              </td>
+              <td>{{ certificate.issue_date|date:"Y-m-d"|default:"—" }}</td>
+              <td>{{ certificate.issuing_body_literal|default:"—" }}</td>
+            {% else %}
+              <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
+            {% endif %}
+            <td>
+              {% if document.processing_state == "pending_review" or document.processing_state == "approved" or document.processing_state == "rejected" or document.processing_state == "error" %}
+                {{ document.get_processing_state_display }}
+              {% else %}
+                <span class="processing-badge">{{ document.get_processing_state_display }}</span>
+              {% endif %}
+            </td>
+            <td>{{ document.created_at|date:"Y-m-d H:i" }}</td>
+          </tr>
+          {% endwith %}
+        {% empty %}
+          <tr><td colspan="12">No hay documentos para los filtros seleccionados.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if page.has_other_pages %}
+      <nav class="pagination">
+        {% if page.has_previous %}<a href="?page={{ page.previous_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">← Anterior</a>{% endif %}
+        <span>Página {{ page.number }} de {{ page.paginator.num_pages }}</span>
+        {% if page.has_next %}<a href="?page={{ page.next_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">Siguiente →</a>{% endif %}
+      </nav>
+    {% endif %}
+
+    <p>
+      <a class="button" href="{% url 'documents:upload' %}">Subir certificado</a>
+      <a class="button" href="{% url 'documents:queue' %}">Cola de proceso</a>
+      <a class="button" href="{% url 'documents:gallery' %}">Galería</a>
+      {% if can_delete %}
+        <a class="button danger" href="{% url 'documents:delete_all' %}">Eliminar todos</a>
+      {% endif %}
+    </p>
+  </section>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Eliminar documento · Certificados de idiomas{% endblock %}
+{% block content %}
+  <section class="panel narrow">
+    <h1>Eliminar documento</h1>
+    <p>Se eliminarán el registro, los datos extraídos, el historial de revisión y el original almacenado.</p>
+    <p><strong>{{ document.original_filename }}</strong></p>
+    <form method="post">
+      {% csrf_token %}
+      <button type="submit" class="button danger">Eliminar definitivamente</button>
+      <a class="link-button" href="{% url 'home' %}">Cancelar</a>
+    </form>
+  </section>
+{% endblock %}

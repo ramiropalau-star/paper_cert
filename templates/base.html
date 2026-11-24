@@ -1,0 +1,37 @@
+{% load static %}<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Certificados de idiomas{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'core/app.css' %}">
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="/">Certificados de idiomas</a>
+    <nav>
+      {% if user.is_authenticated %}
+        <a href="/documents/">Documentos</a>
+        <a href="/documents/gallery/">Galería</a>
+        <a href="/reports/">Reportes</a>
+        <a href="/catalog/">Equivalencias</a>
+        <span class="user">{{ user.get_username }}</span>
+        <form method="post" action="/accounts/logout/" class="inline-form">
+          {% csrf_token %}
+          <button type="submit" class="link-button">Cerrar sesión</button>
+        </form>
+      {% else %}
+        <a href="/accounts/login/">Ingresar</a>
+      {% endif %}
+    </nav>
+  </header>
+  <main class="app-main {% block main_class %}{% endblock %}">
+    {% if messages %}
+      <ul class="messages">
+        {% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

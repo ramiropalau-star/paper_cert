@@ -1,0 +1,14 @@
+# Override opcional: GPU NVIDIA para Ollama vía CDI.
+# Requiere nvidia-container-toolkit instalado y el spec generado:
+#   nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+# Uso manual: docker compose -f compose.yaml -f compose.gpu.yaml ...
+# deploy.sh lo activa automáticamente cuando detecta GPU + toolkit.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: cdi
+              device_ids: ["nvidia.com/gpu=all"]
+              capabilities: [gpu]

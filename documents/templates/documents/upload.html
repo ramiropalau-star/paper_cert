@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Subir certificado · Certificados de idiomas{% endblock %}
+{% block content %}
+  <section class="panel narrow">
+    <h1>Subir certificado</h1>
+    <p>Aceptamos PDF e imágenes (JPG, PNG, TIFF, WebP, BMP, GIF, HEIC, HEIF, AVIF). Podés seleccionar varios archivos a la vez. El tipo de archivo se detecta por su contenido, aunque no tenga extensión. El archivo se valida antes de procesarse.</p>
+    <form method="post" enctype="multipart/form-data">
+      {% csrf_token %}
+      <p>
+        <label for="document">Archivos</label>
+        <input id="document" name="document" type="file" multiple
+               accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.webp,.bmp,.gif,.heic,.heif,.avif,application/pdf,image/jpeg,image/png,image/tiff,image/webp,image/bmp,image/gif,image/heic,image/heif,image/avif"
+               required>
+      </p>
+      <button type="submit" class="button">Subir</button>
+    </form>
+  </section>
+{% endblock %}

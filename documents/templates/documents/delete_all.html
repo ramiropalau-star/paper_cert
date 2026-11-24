@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Eliminar todos los documentos{% endblock %}
+{% block content %}
+  <section class="panel narrow">
+    <h1>Eliminar todos los documentos</h1>
+    <p>
+      Esta acción es <strong>irreversible</strong>. Se eliminarán:
+    </p>
+    <ul>
+      <li>Los {{ count }} registros de Django (certificados, extracciones, historial de revisión).</li>
+      <li>Todos los documentos originales almacenados en Paperless.</li>
+    </ul>
+    <p class="muted">El catálogo de idiomas, entidades y equivalencias NO se toca.</p>
+    <form method="post">
+      {% csrf_token %}
+      <button type="submit" class="button danger">Eliminar todo definitivamente</button>
+      <a class="link-button" href="{% url 'documents:list' %}">Cancelar</a>
+    </form>
+  </section>
+{% endblock %}

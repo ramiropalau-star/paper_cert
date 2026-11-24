@@ -1,0 +1,229 @@
+name: paperless-certs
+
+services:
+  db:
+    image: postgres:17.6-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-paperless}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      POSTGRES_DB: ${DB_NAME:-paperless_certs}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits: { memory: 1G }
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits: { memory: 256M }
+
+  paperless:
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.3.1
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      PAPERLESS_REDIS: redis://redis:6379
+      PAPERLESS_DBHOST: db
+      PAPERLESS_DBPORT: 5432
+      PAPERLESS_DBNAME: paperless
+      PAPERLESS_DBUSER: paperless
+      PAPERLESS_DBPASS: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY:?Set PAPERLESS_SECRET_KEY in .env}
+      PAPERLESS_URL: ${PAPERLESS_URL:-http://localhost:9090}
+      PAPERLESS_ADMIN_USER: ${PAPERLESS_ADMIN_USER:-admin}
+      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD:?Set PAPERLESS_ADMIN_PASSWORD in .env}
+      PAPERLESS_OCR_LANGUAGE: ${PAPERLESS_OCR_LANGUAGE:-spa+eng}
+      PAPERLESS_FILENAME_FORMAT: ${PAPERLESS_FILENAME_FORMAT:-{{correspondent}}/{{title}}}
+    volumes:
+      - paperless-data:/usr/src/paperless/data
+      - paperless-media:/usr/src/paperless/media
+      - paperless-consume:/usr/src/paperless/consume
+    # Optional: expose the Paperless UI to operators. Keep commented for the
+    # default hardened topology; uncomment and set APP_PAPERLESS_UI_URL
+    # accordingly when direct browser access is needed.
+    ports:
+      - "9090:8000"
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits: { memory: 2G }
+
+  ollama:
+    image: ollama/ollama:0.5.7
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    deploy:
+      resources:
+        limits: { memory: 8G }
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  ocr:
+    build:
+      context: ./ocr-service
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    deploy:
+      resources:
+        limits: { memory: 2G }
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/app.Dockerfile
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      ocr:
+        condition: service_healthy
+      paperless:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      APP_MEDIA_ROOT: /data/media
+      APP_REPORT_OUTPUT_DIR: /data/reports
+      DB_HOST: db
+    ports:
+      - "${APP_PORT:-8080}:8000"
+    volumes:
+      - app-media:/data/media
+      - reports:/data/reports
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { memory: 1G }
+
+  watcher:
+    build:
+      context: .
+      dockerfile: docker/app.Dockerfile
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      APP_INBOX_DIR: /data/inbox
+      APP_INBOX_POLL_SECONDS: ${APP_INBOX_POLL_SECONDS:-10}
+      APP_MEDIA_ROOT: /data/media
+      APP_REPORT_OUTPUT_DIR: /data/reports
+      DB_HOST: db
+    command: ["python", "manage.py", "watch_inbox"]
+    volumes:
+      - ./inbox:/data/inbox
+      - app-media:/data/media
+      - reports:/data/reports
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import pathlib,sys; sys.exit(0 if b'watch_inbox' in pathlib.Path('/proc/1/cmdline').read_bytes() else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits: { memory: 512M }
+
+  n8n:
+    image: n8nio/n8n:1.85.4
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: db
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: paperless
+      DB_POSTGRESDB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY in .env}
+      N8N_SECURE_COOKIE: "true"
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-UTC}
+      N8N_RUNNERS_ENABLED: "true"
+      APP_INTERNAL_API_TOKEN: ${APP_INTERNAL_API_TOKEN}
+      APP_INTERNAL_URL: http://app:8000
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits: { memory: 1G }
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  paperless-data:
+  paperless-media:
+  paperless-consume:
+  n8n-data:
+  ollama-models:
+  app-media:
+  reports:

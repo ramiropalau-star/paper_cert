@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Añadir entidad certificadora{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Añadir entidad certificadora</h1>
+  <p class="muted">
+    Crea la entidad, un examen inicial y sus equivalencias UV L2.
+    Después puedes añadir más exámenes desde la tabla de equivalencias.
+  </p>
+  <form method="post">
+    {% csrf_token %}
+    <h2>Entidad</h2>
+    <p>
+      <label>Nombre <input type="text" name="entity_name" required size="50"></label>
+      <label>Aliases (separados por comas) <input type="text" name="entity_aliases" size="50"></label>
+    </p>
+    <h2>Examen</h2>
+    <p>
+      <label>Nombre del examen <input type="text" name="exam_name" required size="50"></label>
+      <label>Idioma
+        <select name="language">
+          <option value="">—</option>
+          {% for language in languages %}<option value="{{ language.pk }}">{{ language.name }}</option>{% endfor %}
+        </select>
+      </label>
+    </p>
+    <h2>Equivalencias</h2>
+    <p class="muted">Deja el nivel vacío para omitir la fila. Min/max vacíos = regla general sin banda.</p>
+    <table class="data-table">
+      <thead><tr><th>Nivel acreditado</th><th>Banda mín.</th><th>Banda máx.</th></tr></thead>
+      <tbody id="eq-rows">
+        <tr>
+          <td><select name="eq_level"><option value="">—</option>{% for v, l in levels %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></td>
+          <td><input type="text" name="eq_min" size="6"></td>
+          <td><input type="text" name="eq_max" size="6"></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <button type="button" class="link-button" id="add-eq-row">+ Añadir fila</button>
+      <button type="submit" class="button">Crear entidad y examen</button>
+      <a href="{% url 'catalog:equivalences' %}">Cancelar</a>
+    </p>
+  </form>
+</section>
+<script>
+(function () {
+  var tbody = document.getElementById("eq-rows");
+  var template = tbody.querySelector("tr").cloneNode(true);
+  document.getElementById("add-eq-row").addEventListener("click", function () {
+    var row = template.cloneNode(true);
+    row.querySelectorAll("select").forEach(function (s) { s.selectedIndex = 0; });
+    row.querySelectorAll("input").forEach(function (i) { i.value = ""; });
+    tbody.appendChild(row);
+  });
+})();
+</script>
+{% endblock %}

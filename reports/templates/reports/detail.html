@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Reporte {{ job.pk }}{% endblock %}
+{% block content %}
+<h1>Reporte #{{ job.pk }}</h1>
+<p>Estado: <strong>{{ job.get_status_display }}</strong></p>
+{% if job.error_reason %}<p class="error">{{ job.error_reason }}</p>{% endif %}
+<p>Solicitado por: {{ job.requested_by.username|default:"—" }}</p>
+<p>Creado: {{ job.created_at|date:"Y-m-d H:i" }} · Completado: {{ job.completed_at|date:"Y-m-d H:i"|default:"—" }}</p>
+<p>Filtros: <code>{{ job.filters }}</code></p>
+{% if job.status == 'ready' %}
+<p><a class="button" href="{% url 'reports:download' job.pk %}">Descargar .xlsx</a></p>
+{% endif %}
+<p><a href="{% url 'reports:list' %}">Volver a reportes</a></p>
+<script>
+(function () {
+  var statusUrl = "{% url 'reports:status' job.pk %}";
+  function refresh() {
+    fetch(statusUrl).then(function (r) { return r.json(); }).then(function (data) {
+      if (data.status === "queued" || data.status === "running") {
+        setTimeout(refresh, 2000);
+      } else {
+        location.reload();
+      }
+    });
+  }
+  refresh();
+})();
+</script>
+{% endblock %}

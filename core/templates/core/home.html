@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Certificados de idiomas{% endblock %}
+{% block content %}
+  <section class="panel">
+    <h1>Certificados de idiomas</h1>
+    <p>Cargá certificados en PDF o imagen, revisá los datos extraídos y generá el informe Excel.</p>
+    <p>
+      <a class="button" href="{% url 'documents:upload' %}">Subir certificado</a>
+      <a class="button" href="{% url 'documents:list' %}">Ver documentos</a>
+    </p>
+  </section>
+{% endblock %}

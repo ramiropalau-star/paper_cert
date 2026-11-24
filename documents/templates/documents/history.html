@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Historial · {{ document.original_filename }}{% endblock %}
+{% block content %}
+  <section class="panel">
+    <h1>Historial de cambios</h1>
+    <p><a href="{% url 'documents:detail' document.pk %}">← Volver a la revisión</a></p>
+    {% if certificate is None %}
+      <p>Este documento no tiene certificado asociado.</p>
+    {% else %}
+      <table class="data-table">
+        <thead>
+          <tr><th>Fecha</th><th>Evento</th><th>Actor</th><th>Motivo</th><th>Cambios</th></tr>
+        </thead>
+        <tbody>
+          {% for event in events %}
+            <tr>
+              <td>{{ event.created_at|date:"Y-m-d H:i" }}</td>
+              <td>{{ event.get_event_type_display }}</td>
+              <td>{{ event.actor.get_username|default:"sistema" }}</td>
+              <td>{{ event.reason|default:"—" }}</td>
+              <td>
+                {% if event.before or event.after %}
+                  <details>
+                    <summary>Ver valores</summary>
+                    <pre>{{ event.before|pprint }} → {{ event.after|pprint }}</pre>
+                  </details>
+                {% else %}—{% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="5">Sin eventos registrados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </section>
+{% endblock %}

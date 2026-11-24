@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}Galería · Certificados de idiomas{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+  <section class="panel">
+    <h1>Galería de certificados</h1>
+
+    <form method="get" class="filters">
+      <p>
+        <label for="f-state">Estado</label>
+        <select id="f-state" name="state">
+          <option value="">Todos</option>
+          <option value="processed" {% if state == "processed" %}selected{% endif %}>Procesados</option>
+          <option value="pending" {% if state == "pending" %}selected{% endif %}>Pendientes de revisión</option>
+          <option value="approved" {% if state == "approved" %}selected{% endif %}>Aprobados</option>
+          <option value="rejected" {% if state == "rejected" %}selected{% endif %}>Rechazados</option>
+          <option value="error" {% if state == "error" %}selected{% endif %}>Error</option>
+        </select>
+      </p>
+      <p>
+        <label for="f-q">Buscar</label>
+        <input id="f-q" name="q" type="search" value="{{ query }}" placeholder="Alumno o archivo">
+      </p>
+      <p>
+        <label for="f-language">Idioma</label>
+        <select id="f-language" name="language">
+          <option value="">Todos</option>
+          {% for item in languages %}
+            <option value="{{ item.pk }}" {% if language == item.pk|stringformat:"s" %}selected{% endif %}>{{ item.name }}</option>
+          {% endfor %}
+        </select>
+      </p>
+      <p>
+        <label for="f-entity">Entidad</label>
+        <select id="f-entity" name="entity">
+          <option value="">Todas</option>
+          {% for item in entities %}
+            <option value="{{ item.pk }}" {% if entity == item.pk|stringformat:"s" %}selected{% endif %}>{{ item.name }}</option>
+          {% endfor %}
+        </select>
+      </p>
+      <p>
+        <label for="f-organism">Organismo emisor</label>
+        <input id="f-organism" name="organism" type="search" value="{{ organism }}" placeholder="Texto">
+      </p>
+      <button type="submit" class="button">Filtrar</button>
+      <a href="{% url 'documents:gallery' %}">Limpiar</a>
+    </form>
+
+    <form method="post" action="{% url 'documents:bulk_review' %}" id="bulk-form">
+      {% csrf_token %}
+      <input type="hidden" name="state" value="{{ state }}">
+      <input type="hidden" name="q" value="{{ query }}">
+      <input type="hidden" name="language" value="{{ language }}">
+      <input type="hidden" name="entity" value="{{ entity }}">
+      <input type="hidden" name="organism" value="{{ organism }}">
+      <input type="hidden" name="page" value="{{ page.number }}">
+
+      <div class="bulk-bar">
+        <label class="bulk-select-all">
+          <input type="checkbox" id="select-all"> Seleccionar página
+        </label>
+        <label class="size-control">
+          Tamaño
+          <input type="range" id="size-slider" min="140" max="640" step="20" value="320">
+        </label>
+        <select name="action" aria-label="Acción masiva">
+          <option value="validate">Validar seleccionados</option>
+          <option value="approve">Aprobar seleccionados</option>
+        </select>
+        <button type="submit" class="button">Aplicar</button>
+      </div>
+
+      <div class="gallery-grid">
+        {% for document in page %}
+          {% with certificate=document.certificate %}
+          <div class="gallery-card">
+            <input type="checkbox" name="documents" value="{{ document.pk }}" class="gallery-check">
+            <div class="gallery-media">
+              {% if document.paperless_document_id %}
+                <button type="button" class="zoom-btn"
+                        data-url="{% url 'documents:original' document.pk %}"
+                        data-name="{{ document.original_filename }}"
+                        title="Ver en grande">+</button>
+                <a href="{% url 'documents:detail' document.pk %}">
+                  <img src="{% url 'documents:thumbnail' document.pk %}" loading="lazy" alt="{{ document.original_filename }}">
+                </a>
+              {% else %}
+                <div class="gallery-placeholder">{{ document.content_type|slice:":4"|upper|default:"ARCHIVO" }}</div>
+              {% endif %}
+            </div>
+            <div class="gallery-meta">
+              <div class="student"><a href="{% url 'documents:detail' document.pk %}">{{ certificate.student_name|default:"—" }}</a></div>
+              <div>{{ certificate.language.name|default:certificate.language_literal|default:"—" }}</div>
+              <div>{{ certificate.entity.name|default:certificate.entity_literal|default:"—" }}</div>
+              <div>{{ certificate.cefr_level|default:certificate.level_literal|default:"—" }}</div>
+              <div class="muted">Equiv. UV: {% if certificate.equivalence_rule_pk %}<a href="{% url 'catalog:equivalences' %}#eq-{{ certificate.equivalence_rule_pk }}">{{ certificate.equivalence }}</a>{% else %}{{ certificate.equivalence|default:"—" }}{% endif %}</div>
+              <div class="muted">{{ document.original_filename }}</div>
+            </div>
+          </div>
+          {% endwith %}
+        {% empty %}
+          <p>No hay certificados para los filtros seleccionados.</p>
+        {% endfor %}
+      </div>
+    </form>
+
+    <div class="zoom-tip" id="zoom-tip" hidden>
+      <div class="zoom-tip-name" id="zoom-tip-name"></div>
+      <iframe id="zoom-tip-frame" title="Documento" hidden></iframe>
+    </div>
+
+    <div class="lightbox" id="lightbox" hidden>
+      <div class="lightbox-backdrop" data-close></div>
+      <div class="lightbox-body">
+        <div class="lightbox-header">
+          <span id="lightbox-name"></span>
+          <button type="button" class="button" data-close>Cerrar</button>
+        </div>
+        <iframe id="lightbox-frame" title="Documento"></iframe>
+      </div>
+    </div>
+
+    {% if page.has_other_pages %}
+      <nav class="pagination">
+        {% if page.has_previous %}<a href="?page={{ page.previous_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">← Anterior</a>{% endif %}
+        <span>Página {{ page.number }} de {{ page.paginator.num_pages }}</span>
+        {% if page.has_next %}<a href="?page={{ page.next_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">Siguiente →</a>{% endif %}
+      </nav>
+    {% endif %}
+  </section>
+  <script>
+    document.getElementById("select-all").addEventListener("change", function () {
+      document.querySelectorAll(".gallery-check").forEach(function (cb) {
+        cb.checked = document.getElementById("select-all").checked;
+      });
+    });
+
+    (function () {
+      var tip = document.getElementById("zoom-tip");
+      var tipName = document.getElementById("zoom-tip-name");
+      var tipFrame = document.getElementById("zoom-tip-frame");
+
+      function hideTip() {
+        tip.hidden = true;
+        tipFrame.hidden = true;
+        tipFrame.removeAttribute("src");
+      }
+
+      function showTip(btn) {
+        tipName.textContent = btn.dataset.name;
+        tipFrame.src = btn.dataset.url;
+        tipFrame.hidden = false;
+        tip.hidden = false;
+
+        var rect = btn.getBoundingClientRect();
+        var tipRect = tip.getBoundingClientRect();
+        var left = rect.right + 12;
+        if (left + tipRect.width > window.innerWidth - 8) {
+          left = rect.left - tipRect.width - 12;
+        }
+        var top = Math.max(8, Math.min(rect.top, window.innerHeight - tipRect.height - 8));
+        tip.style.left = left + "px";
+        tip.style.top = top + "px";
+      }
+
+      document.querySelectorAll(".zoom-btn").forEach(function (btn) {
+        btn.addEventListener("mouseenter", function () { showTip(btn); });
+        btn.addEventListener("mouseleave", hideTip);
+        btn.addEventListener("click", function (event) {
+          event.stopPropagation();
+          event.preventDefault();
+          hideTip();
+          openLightbox(btn);
+        });
+      });
+    })();
+
+    (function () {
+      var lightbox = document.getElementById("lightbox");
+      var frame = document.getElementById("lightbox-frame");
+      var name = document.getElementById("lightbox-name");
+
+      function close() {
+        lightbox.hidden = true;
+        frame.removeAttribute("src");
+      }
+
+      window.openLightbox = function (btn) {
+        name.textContent = btn.dataset.name;
+        frame.src = btn.dataset.url;
+        lightbox.hidden = false;
+      };
+
+      lightbox.querySelectorAll("[data-close]").forEach(function (el) {
+        el.addEventListener("click", close);
+      });
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && !lightbox.hidden) close();
+      });
+    })();
+
+    (function () {
+      var grid = document.querySelector(".gallery-grid");
+      var slider = document.getElementById("size-slider");
+      if (!grid || !slider) return;
+
+      function applySize(px) {
+        grid.style.setProperty("--card-min", px + "px");
+        grid.style.setProperty("--card-h", Math.round(px * 0.85) + "px");
+      }
+
+      var saved = localStorage.getItem("gallery-size");
+      if (saved) {
+        slider.value = saved;
+        applySize(parseInt(saved, 10));
+      } else {
+        applySize(parseInt(slider.value, 10));
+      }
+
+      slider.addEventListener("input", function () {
+        localStorage.setItem("gallery-size", slider.value);
+        applySize(parseInt(slider.value, 10));
+      });
+    })();
+  </script>
+{% endblock %}

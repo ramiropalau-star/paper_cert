@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Cola de procesamiento{% endblock %}
+{% block content %}
+  <section class="panel">
+    <h1>Cola de procesamiento</h1>
+    <p class="muted">
+      {{ count }} documento(s) en proceso. Esta página se actualiza sola cada 5 segundos.
+    </p>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Archivo</th>
+          <th>Alumno</th>
+          <th>Etapa</th>
+          <th>Última actualización</th>
+          <th>Subido</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for document in documents %}
+        <tr>
+          <td><a href="{% url 'documents:detail' document.pk %}">{{ document.original_filename }}</a></td>
+          <td>{{ document.certificate.student_name|default:"—" }}</td>
+          <td><span class="processing-badge">{{ document.get_processing_state_display }}</span></td>
+          <td>{{ document.updated_at|date:"Y-m-d H:i:s" }}</td>
+          <td>{{ document.created_at|date:"Y-m-d H:i" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5">No hay documentos en proceso.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p><a href="{% url 'documents:list' %}">Volver a documentos</a></p>
+  </section>
+  <script>
+    setTimeout(function () { location.reload(); }, 5000);
+  </script>
+{% endblock %}

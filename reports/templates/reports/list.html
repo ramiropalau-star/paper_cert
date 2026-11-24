@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Reportes{% endblock %}
+{% block content %}
+<h1>Reportes</h1>
+
+<section>
+  <h2>Nuevo reporte</h2>
+  <form method="post">
+    {% csrf_token %}
+    <div class="filters">
+      <label>Alumno <input type="text" name="student"></label>
+      <label>Idioma
+        <select name="language">
+          <option value="">Todos</option>
+          {% for language in languages %}<option value="{{ language.pk }}">{{ language.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Entidad
+        <select name="entity">
+          <option value="">Todas</option>
+          {% for entity in entities %}<option value="{{ entity.pk }}">{{ entity.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Nivel <input type="text" name="level" placeholder="B2"></label>
+      <label>Fecha expedición desde <input type="date" name="issue_date_from"></label>
+      <label>Fecha expedición hasta <input type="date" name="issue_date_to"></label>
+      <label><input type="checkbox" name="include_pending" value="1" checked> Incluir pendientes de revisión</label>
+      <button type="submit">Generar reporte</button>
+    </div>
+  </form>
+</section>
+
+<section>
+  <h2>Trabajos</h2>
+  <table>
+    <thead>
+      <tr><th>#</th><th>Estado</th><th>Solicitado por</th><th>Creado</th><th>Completado</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr>
+        <td><a href="{% url 'reports:detail' job.pk %}">{{ job.pk }}</a></td>
+        <td>{{ job.get_status_display }}</td>
+        <td>{{ job.requested_by.username|default:"—" }}</td>
+        <td>{{ job.created_at|date:"Y-m-d H:i" }}</td>
+        <td>{{ job.completed_at|date:"Y-m-d H:i"|default:"—" }}</td>
+        <td>{% if job.status == 'ready' %}<a href="{% url 'reports:download' job.pk %}">Descargar</a>{% endif %}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6">No hay reportes generados.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

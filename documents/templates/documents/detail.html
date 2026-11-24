@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+{% block title %}Revisión · {{ document.original_filename }}{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+  <div class="review-split">
+    <div>
+      <section class="panel">
+        <h1>Revisión de documento</h1>
+        <p class="review-nav">
+          {% if previous_document %}
+            <a class="button" href="{% url 'documents:detail' previous_document.pk %}">← Anterior</a>
+          {% endif %}
+          <a href="{% url 'documents:list' %}?state=pending">Pendientes de revisión</a>
+          {% if next_document %}
+            <a class="button" href="{% url 'documents:detail' next_document.pk %}">Siguiente →</a>
+          {% endif %}
+        </p>
+
+        {% if certificate is not None and can_review and certificate.review_status != "approved" and certificate.review_status != "rejected" %}
+          <h3>Decisión</h3>
+          {% if certificate.review_status == "pending" %}
+          <form method="post" action="{% url 'documents:validate' document.pk %}" class="inline-form">
+            {% csrf_token %}
+            <button type="submit" class="button">Validar</button>
+          </form>
+          {% endif %}
+          <form method="post" action="{% url 'documents:approve' document.pk %}" class="inline-form">
+            {% csrf_token %}
+            <button type="submit" class="button">Aprobar</button>
+          </form>
+          <form method="post" action="{% url 'documents:reject' document.pk %}" class="inline-form">
+            {% csrf_token %}
+            <input type="text" name="reason" placeholder="Motivo del rechazo" required>
+            <button type="submit" class="button danger">Rechazar</button>
+          </form>
+          <form method="post" action="{% url 'documents:reprocess' document.pk %}" class="inline-form">
+            {% csrf_token %}
+            <button type="submit" class="button">Reprocesar</button>
+          </form>
+        {% elif certificate is not None and can_review %}
+          <form method="post" action="{% url 'documents:reprocess' document.pk %}" class="inline-form">
+            {% csrf_token %}
+            <button type="submit" class="button">Reprocesar</button>
+          </form>
+        {% endif %}
+
+        <p>
+          <strong>{{ document.original_filename }}</strong> —
+          Estado:
+          {% if document.processing_state == "pending_review" or document.processing_state == "approved" or document.processing_state == "rejected" or document.processing_state == "error" %}
+            {{ document.get_processing_state_display }}
+          {% else %}
+            <span class="processing-badge">{{ document.get_processing_state_display }}</span>
+          {% endif %}
+          {% if document.error_reason %}<br><span class="form-error">{{ document.error_reason }}</span>{% endif %}
+        </p>
+        <p>
+          Método de texto: {{ document.get_text_method_display|default:"—" }} ·
+          Páginas: {{ document.page_count|default:"—" }} ·
+          Huella: <code>{{ document.fingerprint|slice:":12" }}…</code>
+          {% if paperless_url %}· <a href="{{ paperless_url }}" target="_blank" rel="noopener">Ver original en Paperless</a>{% endif %}
+        </p>
+
+        {% if certificate is None %}
+          <p class="form-error">Este documento no tiene datos extraídos.</p>
+          {% if can_review %}
+            <form method="post" action="{% url 'documents:reprocess' document.pk %}">
+              {% csrf_token %}
+              <button type="submit" class="button">Reprocesar</button>
+            </form>
+          {% endif %}
+        {% else %}
+          <h2>Datos extraídos</h2>
+          {% if certificate.review_status != "approved" and certificate.review_reasons %}
+            <ul class="review-reasons">
+              {% for reason in certificate.review_reasons %}<li>{{ reason }}</li>{% endfor %}
+            </ul>
+          {% endif %}
+
+          <form method="post" action="{% url 'documents:edit' document.pk %}" id="cert-form">
+            {% csrf_token %}
+            <table class="data-table review-fields{% if editing %} is-editing{% endif %}" id="datos">
+              <tbody>
+                <tr>
+                  <th>Alumno</th>
+                  <td class="cell-view">{{ certificate.student_name|default:"—" }}{% if warnings.fields %} <span class="warn">⚠ {{ warnings.fields }}</span>{% endif %}</td>
+                  <td class="cell-edit">{{ form.student_name }}</td>
+                </tr>
+                <tr>
+                  <th>Idioma</th>
+                  <td class="cell-view">{{ certificate.language.name|default:certificate.language_literal|default:"—" }}{% if warnings.language_literal %} <span class="warn">⚠ {{ warnings.language_literal }}</span>{% endif %}</td>
+                  <td class="cell-edit">
+                    <div class="edit-stack">
+                      <label>Catálogo{{ form.language }}</label>
+                      <label>Texto literal{{ form.language_literal }}</label>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <th>Entidad certificadora</th>
+                  <td class="cell-view">{{ certificate.entity.name|default:certificate.entity_literal|default:"—" }}{% if warnings.entity_literal %} <span class="warn">⚠ {{ warnings.entity_literal }}</span>{% endif %}</td>
+                  <td class="cell-edit">
+                    <div class="edit-stack">
+                      <label>Catálogo{{ form.entity }}</label>
+                      <label>Texto literal{{ form.entity_literal }}</label>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <th>Organismo emisor</th>
+                  <td class="cell-view">{{ certificate.issuing_body_literal|default:"—" }}</td>
+                  <td class="cell-edit">{{ form.issuing_body_literal }}</td>
+                </tr>
+                <tr>
+                  <th>Centro de examen</th>
+                  <td class="cell-view">{{ certificate.test_center_literal|default:"—" }}</td>
+                  <td class="cell-edit">{{ form.test_center_literal }}</td>
+                </tr>
+                <tr>
+                  <th>Examen / certificado</th>
+                  <td class="cell-view">{{ certificate.exam.name|default:certificate.exam_literal|default:"—" }}</td>
+                  <td class="cell-edit">
+                    <div class="edit-stack">
+                      <label>Catálogo{{ form.exam }}</label>
+                      <label>Texto literal{{ form.exam_literal }}</label>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <th>Nivel literal</th>
+                  <td class="cell-view">{{ certificate.level_literal|default:"—" }}</td>
+                  <td class="cell-edit">{{ form.level_literal }}</td>
+                </tr>
+                <tr>
+                  <th>Nivel MCER</th>
+                  <td class="cell-view">{{ certificate.cefr_level|default:"—" }}{% if certificate.cefr_source %} <small>({{ certificate.get_cefr_source_display }})</small>{% endif %}</td>
+                  <td class="cell-edit">{{ form.cefr_level }}</td>
+                </tr>
+                <tr>
+                  <th>Equivalencia UV L2</th>
+                  <td class="cell-view">{{ certificate.equivalence|default:"—" }}</td>
+                  <td class="cell-edit">{{ form.equivalence }}</td>
+                </tr>
+                <tr>
+                  <th>Puntuación</th>
+                  <td class="cell-view">{{ certificate.score_literal|default:"—" }}</td>
+                  <td class="cell-edit">{{ form.score_literal }}</td>
+                </tr>
+                <tr>
+                  <th>Fecha de expedición</th>
+                  <td class="cell-view">{{ certificate.issue_date|date:"Y-m-d"|default:"—" }}</td>
+                  <td class="cell-edit">{{ form.issue_date }}</td>
+                </tr>
+                <tr>
+                  <th>Fecha de examen</th>
+                  <td class="cell-view">{{ certificate.exam_date|date:"Y-m-d"|default:"—" }}</td>
+                  <td class="cell-edit">{{ form.exam_date }}</td>
+                </tr>
+                <tr>
+                  <th>Fecha de resultado</th>
+                  <td class="cell-view">{{ certificate.result_date|date:"Y-m-d"|default:"—" }}</td>
+                  <td class="cell-edit">{{ form.result_date }}</td>
+                </tr>
+                <tr>
+                  <th>Fecha detectada</th>
+                  <td class="cell-view">{{ certificate.detected_date|date:"Y-m-d"|default:"—" }}{% if warnings.dates %} <span class="warn">⚠ {{ warnings.dates }}</span>{% endif %}</td>
+                  <td class="cell-edit">{{ form.detected_date }}</td>
+                </tr>
+                <tr>
+                  <th>Código de certificado</th>
+                  <td class="cell-view">{{ certificate.certificate_code|default:"—" }}</td>
+                  <td class="cell-edit">{{ form.certificate_code }}</td>
+                </tr>
+                <tr>
+                  <th>Confianza</th>
+                  <td colspan="2">{% if certificate.confidence is not None %}{{ certificate.confidence|floatformat:2 }}{% else %}—{% endif %}{% if warnings.confidence %} <span class="warn">⚠ {{ warnings.confidence }}</span>{% endif %}</td>
+                </tr>
+                <tr>
+                  <th>Estado de revisión</th>
+                  <td colspan="2">{{ certificate.get_review_status_display }}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            {% if can_review %}
+              <p class="form-actions">
+                {% if editing %}
+                  <button type="submit" class="button">Guardar cambios</button>
+                  <a class="button" href="{% url 'documents:detail' document.pk %}#datos">Cancelar</a>
+                {% else %}
+                  <a class="button" href="{% url 'documents:detail' document.pk %}?edit=1#datos">Editar</a>
+                {% endif %}
+              </p>
+            {% endif %}
+          </form>
+
+          {% if warnings.document %}<p class="warn">⚠ {{ warnings.document }}</p>{% endif %}
+
+          {% if certificate.evidence %}
+            <h3>Evidencia</h3>
+            <ul>
+              {% for field, ev in certificate.evidence.items %}
+                <li><strong>{{ field }}</strong> (pág. {{ ev.page|default:"?" }}): “{{ ev.quote }}”</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+
+          <p>
+            <a class="button" href="{% url 'documents:history' document.pk %}">Ver historial</a>
+            {% if document.paperless_document_id %}
+              <a class="button" href="{% url 'documents:original' document.pk %}" target="_blank" rel="noopener">Abrir original</a>
+            {% endif %}
+            {% if can_delete %}
+              <a class="button danger" href="{% url 'documents:delete' document.pk %}">Eliminar</a>
+            {% endif %}
+          </p>
+
+          {% if manual_field_labels and can_review %}
+            <h3>Campos protegidos (editados manualmente)</h3>
+            <p class="muted">Estos campos no se sobrescriben al reprocesar. Liberá los que quieras volver a extraer:</p>
+            <ul>
+              {% for field, label in manual_field_labels %}
+                <li>
+                  {{ label }}
+                  <form method="post" action="{% url 'documents:release_field' document.pk %}" class="inline-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="field" value="{{ field }}">
+                    <button type="submit" class="link-button">Liberar</button>
+                  </form>
+                </li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+
+        {% endif %}
+      </section>
+    </div>
+
+    <div class="review-doc">
+      {% if document.paperless_document_id %}
+        <iframe src="{% url 'documents:original' document.pk %}" title="Documento original"></iframe>
+      {% else %}
+        <section class="panel"><p>Este documento no tiene original disponible.</p></section>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

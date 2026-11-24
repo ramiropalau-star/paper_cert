@@ -1,0 +1,108 @@
+# Classification and normalization
+
+Classification maps the literal values extracted from a certificate to the
+editable catalog. It never guesses: matching is exact after Unicode
+normalization (NFKC, casefold, whitespace collapse), and unknown values stay
+literal and unresolved.
+
+## Catalog
+
+Managed in Django admin (admin role):
+
+- **Languages** and **Language aliases** — certified language.
+- **Entities** and **Entity aliases** — certifying bodies.
+- **Exams** — linked to an entity and optionally a language.
+- **CEFR conversion rules** — score range → CEFR level per exam.
+
+Adding an entity, alias, or exam takes effect on the next classification
+run (reprocess the document); no code change or redeploy is needed.
+
+## Matching rules
+
+- Language and entity literals are normalized and matched exactly against
+  aliases first, then catalog names. Near-matches never resolve.
+- Exam literals match exam names exactly; when the entity is resolved, only
+  that entity's exams are considered.
+- Literal printed text is always kept (`language_literal`,
+  `entity_literal`, `exam_literal`, `level_literal`, `score_literal`) next
+  to the resolved catalog foreign keys.
+- Entity roles stay distinct: `entity` is the certifying/examining entity;
+  `issuing_body_literal` and `test_center_literal` remain literal-only and
+  are never invented from a single organization name.
+
+## Unknown entities
+
+An entity literal that matches nothing stays unresolved
+(`entity = NULL`) and the record is routed to review with the
+`unknown_entity` reason, displayed as **"Entidad pendiente de
+identificar"**. The reviewer can fix the literal or extend the catalog and
+reprocess. The same applies to unknown languages (`unknown_language`).
+
+## CEFR levels
+
+`cefr_level` is set only by:
+
+1. **Explicit** — a CEFR token (A1–C2) printed in the level text
+   (`cefr_source = explicit`).
+2. **Approved rule** — an active `CefrConversionRule` for the resolved exam
+   whose score range contains the literal score
+   (`cefr_source = approved_rule`).
+
+Rules without approval metadata or with `is_active = False` never apply
+(see the guardrails enforced by `CefrConversionRule.clean`). Scores are
+never converted across exams.
+
+## Dates
+
+Extraction returns date candidates `{text, role, page, quote}`. Each text
+is parsed with explicit formats plus `dateutil`; results are stored as
+`YYYY-MM-DD` in `issue_date`, `exam_date`, `result_date`, or `detected_date`.
+Original wording is retained in `date_texts["originals"]`.
+
+- `role = unknown`, ambiguous day/month order (e.g. `05/06/2024`), or
+  unparseable text → `detected_date` and the `ambiguous_date` review
+  reason. Ambiguous numeric dates are interpreted day-first.
+- The first parseable candidate per field wins.
+
+## Review reasons
+
+Classification writes these codes to `certificate.review_reasons`:
+
+| Code | Meaning |
+| --- | --- |
+| `missing_essential_fields` | student, language, entity, level/score, or issue date absent |
+| `unknown_language` | language literal not in catalog |
+| `unknown_entity` | entity literal not in catalog ("Entidad pendiente de identificar") |
+| `ambiguous_date` | date role or day/month order uncertain |
+| `low_confidence` | overall confidence below `APP_CONFIDENCE_REVIEW_THRESHOLD` |
+| `multiple_certificates` | file appears to contain several certificates |
+| `non_certificate` | document is not a language certificate |
+
+## `Otros` label
+
+Documents whose language or entity cannot be resolved, that are not
+language certificates, or whose processing fails get the configured
+Paperless label (`APP_PAPERLESS_OTHER_TAG`, default `Otros`) while staying
+in the review queue. The label is removed when a reviewer approves the
+record. Label failures never block processing.
+
+## UV L2 equivalence
+
+The catalog includes `Equivalence` rows transcribed from the UV "Taula
+d'Equivalències L2" (source `UV L2`), extracted from the published PDF by
+page coordinates, that map an exam — optionally within a score band — to
+its accredited CEFR level. Coverage includes English, Spanish, German,
+French, Italian, Portuguese, Russian, and Chinese sections; exams whose
+cells could not be mapped reliably (TOEIC, TCF, GESE spoken, CILS/CELI
+granular levels, SIELE, UNICERT, EOI) have no equivalence and route to
+review for manual assignment. After CEFR resolution,
+`apply_equivalence` stores the accredited level in
+`certificate.equivalence`:
+
+- Score-banded rules win when `score_literal` parses to a number inside the
+  band; unbanded rules act as a fallback for level-named exams.
+- An exam with no matching equivalence leaves `equivalence` empty and adds
+  the `equivalence_not_found` review reason, keeping the record in the
+  review queue.
+- Reviewers can override the value manually; edits are audited like any
+  other field and appear in the report column "Equivalencia UV L2".
