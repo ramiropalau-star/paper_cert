@@ -108,6 +108,12 @@ wait_paperless_healthy() {
   return 1
 }
 
+# ------------------------------------------------------------------ build
+# Sin esto el deploy reutiliza la imagen vieja y el código nuevo nunca llega
+# a los contenedores. app y watcher comparten la misma imagen.
+log "Building app image"
+docker compose build app
+
 # ------------------------------------------------------- databases + paperless
 log "Levantando db + redis + paperless"
 docker compose up -d db redis paperless
