@@ -84,6 +84,17 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-insecure-change-me")
 DEBUG = env_bool(os.environ, "DJANGO_DEBUG", False)
 ALLOWED_HOSTS = env_list(os.environ, "DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]")
 CSRF_TRUSTED_ORIGINS = env_list(os.environ, "DJANGO_CSRF_TRUSTED_ORIGINS", "")
+if not CSRF_TRUSTED_ORIGINS:
+    # Fallback: trust http(s) origins built from ALLOWED_HOSTS on APP_PORT so
+    # fresh deployments without an explicit DJANGO_CSRF_TRUSTED_ORIGINS still
+    # accept browser POSTs (login, forms) on the published port.
+    _csrf_port = os.environ.get("APP_PORT", "8000")
+    CSRF_TRUSTED_ORIGINS = [
+        f"{scheme}://{host}:{_csrf_port}"
+        for host in ALLOWED_HOSTS
+        if host not in ("*", "")
+        for scheme in ("http", "https")
+    ]
 
 INSTALLED_APPS = [
     "django.contrib.admin",

@@ -207,7 +207,13 @@ done
 # La activación por CLI solo marca la DB; los webhooks se registran al
 # arrancar n8n. Sin el restart los endpoints siguen devolviendo 404.
 log "Reiniciando n8n para registrar los webhooks"
-docker compose restart n8n >/dev/null
+# En Docker Desktop/WSL `compose restart` a veces se queda colgado para
+# siempre; timeout + recreación forzada como fallback.
+if ! timeout 120 docker compose restart n8n >/dev/null 2>&1; then
+  warn "docker compose restart n8n no respondió — recreando el contenedor"
+  docker rm -f "$(docker compose ps -q n8n)" >/dev/null 2>&1 || true
+  docker compose up -d --no-deps n8n >/dev/null
+fi
 for i in $(seq 1 36); do
   status=$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q n8n)" 2>/dev/null || echo starting)
   [ "$status" = "healthy" ] && break
