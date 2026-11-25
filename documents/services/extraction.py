@@ -24,7 +24,7 @@ from documents.services.paperless import DocumentStore
 
 logger = logging.getLogger("documents.extraction")
 
-PROMPT_VERSION = "extraction-v1"
+PROMPT_VERSION = "extraction-v3"
 MAX_INVALID_ATTEMPTS = 3
 
 EXTRACTION_REASON_CODES = {
@@ -60,6 +60,32 @@ Rules:
   verbatim quote from that page that supports the value.
 - Provide a confidence between 0 and 1 for each field and for the overall
   extraction.
+- Field guidance:
+  - entity: the organization that awards or certifies the qualification
+    (e.g. Cambridge English, France Éducation international, a ministry or
+    exam board). Never a school, academy, or test centre.
+  - issuing_body: the authority that issued or signed this specific
+    certificate (often a school or official body). It may coincide with the
+    entity; that is fine.
+  - test_center: the school, academy, or venue where the exam was taken.
+  - level: the certification level as printed (e.g. "B2", "Nivel Avanzado",
+    "Zweite Stufe").
+  - score: the overall/global result score only (e.g. "114", "179",
+    "68.00 / 100"). If the document only lists per-skill scores (reading,
+    writing, listening, speaking) with no overall score, return null.
+  - certificate_code: the official certificate or validation number only.
+    Never put exam names, levels, result statuses (e.g. "APTO"), or scores
+    here.
+  - exam: the name of the exam or certification program as printed.
+  - dates: every relevant date printed in the document. Each item's "text"
+    must contain ONLY the date value itself (e.g. "05/12/2020",
+    "5 December 2020", "2020-09-05"), never labels such as "Date of Issue:"
+    or surrounding words. Assign role "issue" to the certificate issue,
+    award, or expedition date; "exam" to the exam or sitting date;
+    "result" to the result publication date; "unknown" otherwise. NEVER
+    include dates of birth, validity or expiry dates, or dates belonging
+    to unrelated documents. If a date appears only as month and year
+    (e.g. "SEPTEMBER 2020"), still report it with role "unknown".
 - Set is_language_certificate to false when the document is not a language
   certificate (diplomas, invoices, letters, blank pages, etc.).
 - Set multiple_certificates_suspected to true when the text appears to

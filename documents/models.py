@@ -1,7 +1,11 @@
+import re
+
 from django.conf import settings
 from django.db import models
 
 from catalog.models import CefrLevel
+
+NPA_RE = re.compile(r"\d{4}ERASMUS([A-Za-z0-9]+)", re.IGNORECASE)
 
 
 class Document(models.Model):
@@ -53,6 +57,12 @@ class Document(models.Model):
 
     def __str__(self) -> str:
         return self.original_filename
+
+    @property
+    def npa(self) -> str:
+        """Student NPA parsed from the intake filename, e.g. WF29402."""
+        match = NPA_RE.search(self.original_filename or "")
+        return match.group(1) if match else ""
 
 
 class DocumentPage(models.Model):

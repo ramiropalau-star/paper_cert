@@ -44,9 +44,9 @@ def test_seed_catalog_is_idempotent_and_covers_required_entities():
     )
     assert counts[0] == 9
     assert counts[1] >= 14
-    assert counts[2] == 36
+    assert counts[2] == 46
     assert counts[3] >= 40
-    assert counts[4] == 175
+    assert counts[4] == 284
     assert counts[5] == 2
 
     required_entities = [
@@ -76,6 +76,23 @@ def test_seed_catalog_is_idempotent_and_covers_required_entities():
         "Università degli Studi Roma Tre",
         "CAPLE",
         "CELPE-Bras",
+        "Oxford University Press",
+        "APTIS",
+        "Anglia Ascentis",
+        "Edexcel",
+        "Universidad de Salamanca esPro",
+        "CLES",
+        "Alexander Pushkin",
+        "TRKI",
+        "Hanban",
+        "Junta Qualificadora de Coneixements de València",
+        "AQA",
+        "TOLES",
+        "English Speaking Board",
+        "University of Michigan",
+        "UNICERT",
+        "General Certificate of Secondary Education",
+        "Ensenyaments d'idiomes",
     ]
     assert set(required_entities) <= set(Entity.objects.values_list("name", flat=True))
 

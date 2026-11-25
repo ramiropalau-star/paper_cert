@@ -15,6 +15,7 @@ from documents.services.classification import (
     parse_date_text,
     parse_score,
     resolve_entity,
+    resolve_exam,
     resolve_language,
 )
 
@@ -105,6 +106,13 @@ def test_entity_alias_matching_accepts_variants():
 def test_entity_matching_rejects_fuzzy_near_matches():
     assert resolve_entity("Cambridge Universyty") is None
     assert resolve_entity("Goethe Institut Berlin") is None
+
+
+def test_exam_alias_matching_accepts_known_variants():
+    exam = resolve_exam("First Certiﬁcate in English", None, None)
+    assert exam is not None and exam.name == "B2 First"
+    assert resolve_exam("Integrated Skills in English (ISE)", None, None).name == "ISE"
+    assert resolve_exam("Examen Inventado", None, None) is None
 
 
 # --- 8.2 language and entity classification ---
@@ -333,10 +341,30 @@ def test_single_undetermined_date_becomes_detected_date():
     assert "ambiguous_date" in certificate.review_reasons
 
 
-def test_ambiguous_day_month_goes_to_detected_date():
+def test_ambiguous_day_month_resolved_by_entity_date_order():
     document = make_document()
     certificate = make_certificate(
         document,
+        date_texts={
+            "candidates": [{"text": "05/06/2024", "role": "issue", "page": 1, "quote": ""}]
+        },
+    )
+
+    classify_certificate(document, store=FakeStore())
+
+    certificate.refresh_from_db()
+    # Cambridge English is seeded with day-first date order.
+    assert certificate.issue_date == date(2024, 6, 5)
+    assert certificate.detected_date is None
+    assert "ambiguous_date" not in certificate.review_reasons
+    assert certificate.date_texts["originals"]["issue_date"] == "05/06/2024"
+
+
+def test_ambiguous_day_month_without_entity_order_stays_detected():
+    document = make_document()
+    certificate = make_certificate(
+        document,
+        entity_literal="IELTS",
         date_texts={
             "candidates": [{"text": "05/06/2024", "role": "issue", "page": 1, "quote": ""}]
         },
@@ -349,6 +377,67 @@ def test_ambiguous_day_month_goes_to_detected_date():
     assert certificate.detected_date == date(2024, 6, 5)
     assert "ambiguous_date" in certificate.review_reasons
     assert certificate.date_texts["originals"]["detected_date"] == "05/06/2024"
+
+
+def test_labelled_date_candidate_extracts_embedded_date():
+    document = make_document()
+    certificate = make_certificate(
+        document,
+        date_texts={
+            "candidates": [
+                {
+                    "text": "Date of Issue: 05/12/2020",
+                    "role": "issue",
+                    "page": 1,
+                    "quote": "",
+                }
+            ]
+        },
+    )
+
+    classify_certificate(document, store=FakeStore())
+
+    certificate.refresh_from_db()
+    assert certificate.issue_date == date(2020, 12, 5)
+    assert certificate.date_texts["originals"]["issue_date"] == "Date of Issue: 05/12/2020"
+
+
+def test_month_year_candidate_is_not_fabricated():
+    document = make_document()
+    certificate = make_certificate(
+        document,
+        date_texts={
+            "candidates": [
+                {"text": "SEPTEMBER 2020", "role": "exam", "page": 1, "quote": ""}
+            ]
+        },
+    )
+
+    classify_certificate(document, store=FakeStore())
+
+    certificate.refresh_from_db()
+    assert certificate.exam_date is None
+    assert certificate.issue_date is None
+    assert certificate.detected_date is None
+    assert "ambiguous_date" in certificate.review_reasons
+
+
+def test_non_date_candidate_is_ignored():
+    document = make_document()
+    certificate = make_certificate(
+        document,
+        date_texts={
+            "candidates": [
+                {"text": "Firma-4751635", "role": "issue", "page": 1, "quote": ""}
+            ]
+        },
+    )
+
+    classify_certificate(document, store=FakeStore())
+
+    certificate.refresh_from_db()
+    assert certificate.issue_date is None
+    assert "ambiguous_date" not in certificate.review_reasons
 
 
 # --- 8.5 review reasons ---

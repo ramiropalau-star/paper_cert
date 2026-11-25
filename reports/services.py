@@ -28,6 +28,7 @@ REJECTED_SHEET = "Rechazados"
 
 HEADERS = [
     "Alumno",
+    "NPA",
     "Idioma",
     "Nivel",
     "Nivel MCER",
@@ -154,6 +155,7 @@ def _row_values(certificate: Certificate) -> list[Any]:
     )
     return [
         certificate.student_name,
+        document.npa,
         (certificate.language.name if certificate.language_id else certificate.language_literal)
         or "",
         certificate.level_literal,

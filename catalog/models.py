@@ -54,9 +54,20 @@ class LanguageAlias(TimestampedModel):
 
 
 class Entity(TimestampedModel):
+    class DateOrder(models.TextChoices):
+        DAY_FIRST = "dmy", "Day first (dd/mm/yyyy)"
+        MONTH_FIRST = "mdy", "Month first (mm/dd/yyyy)"
+
     name = models.CharField(max_length=200, unique=True)
     is_active = models.BooleanField(default=True)
     notes = models.TextField(blank=True)
+    date_order = models.CharField(
+        max_length=3,
+        choices=DateOrder.choices,
+        blank=True,
+        default="",
+        help_text="Day/month order used by this entity's certificates.",
+    )
 
     class Meta:
         ordering = ["name"]
@@ -109,6 +120,23 @@ class Exam(TimestampedModel):
 
     def __str__(self) -> str:
         return self.name
+
+
+class ExamAlias(TimestampedModel):
+    exam = models.ForeignKey(Exam, related_name="aliases", on_delete=models.CASCADE)
+    alias = models.CharField(max_length=200)
+    normalized_alias = models.CharField(max_length=200, unique=True, editable=False)
+
+    class Meta:
+        ordering = ["alias"]
+        verbose_name_plural = "exam aliases"
+
+    def save(self, *args, **kwargs):
+        self.normalized_alias = normalize_catalog_text(self.alias)
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.alias} -> {self.exam.name}"
 
 
 class CefrConversionRuleQuerySet(models.QuerySet):

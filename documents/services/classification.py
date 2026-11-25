@@ -22,6 +22,7 @@ from catalog.models import (
     EntityAlias,
     Equivalence,
     Exam,
+    ExamAlias,
     Language,
     LanguageAlias,
 )
@@ -60,6 +61,19 @@ CEFR_TOKEN = re.compile(r"(?<![A-Za-z0-9])[ABC][12](?![A-Za-z0-9])", re.IGNORECA
 SCORE_NUMBER = re.compile(r"-?\d+(?:[.,]\d+)?")
 NUMERIC_DATE = re.compile(r"^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})$")
 ISO_DATE = re.compile(r"^(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})$")
+EMBEDDED_DATE_TOKEN = re.compile(
+    r"\d{4}[/\-.]\d{1,2}[/\-.]\d{1,2}"
+    r"|\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}"
+    r"|\d{1,2}(?:st|nd|rd|th)?\s+(?:de\s+)?[A-Za-zÀ-ÿ.]+\s+(?:de\s+)?\d{4}"
+    r"|[A-Za-zÀ-ÿ]+\s+\d{1,2},?\s+\d{4}",
+    re.IGNORECASE,
+)
+MONTH_NAME = re.compile(
+    r"\b(?:jan(?:uary|ero)?|feb(?:ruary|rero)?|mar(?:ch|zo)?|apr(?:il|il)?"
+    r"|may|jun(?:e|io)?|jul(?:y|io)?|aug(?:ust|usto)?|sep(?:t(?:ember)?|iembre)?"
+    r"|oct(?:ober|ubre)?|nov(?:ember|iembre)?|dec(?:ember|iembre)?)\b",
+    re.IGNORECASE,
+)
 
 EXPLICIT_DATE_FORMATS = (
     "%d %B %Y",
@@ -127,10 +141,22 @@ def resolve_entity(literal: str) -> Entity | None:
 
 
 def resolve_exam(literal: str, entity: Entity | None, language: Language | None) -> Exam | None:
-    """Resolve an exam by normalized name, preferring the resolved entity."""
+    """Resolve an exam through catalog aliases, then exact normalized name."""
     normalized = _norm(literal)
     if not normalized:
         return None
+    alias = (
+        ExamAlias.objects.filter(exam__is_active=True)
+        .select_related("exam")
+        .filter(normalized_alias=normalized)
+        .first()
+    )
+    if alias is not None:
+        exam = alias.exam
+        entity_ok = entity is None or exam.entity_id in (None, entity.pk)
+        language_ok = language is None or exam.language_id in (None, language.pk)
+        if entity_ok and language_ok:
+            return exam
     candidates = [
         exam
         for exam in Exam.objects.filter(is_active=True).select_related("entity", "language")
@@ -248,11 +274,57 @@ def parse_date_text(text: str) -> tuple[date | None, bool]:
             return datetime.strptime(cleaned, fmt).date(), False
         except ValueError:
             continue
+    # dateutil fills missing day/month/year components with today's date,
+    # so only trust it when the text carries both a day and a year.
+    has_day = re.search(r"\b\d{1,2}(?:st|nd|rd|th)?\b", cleaned)
+    has_year = re.search(r"\b\d{4}\b", cleaned)
+    if not (has_day and has_year):
+        return None, True
     try:
         parsed = date_parser.parse(cleaned, dayfirst=True, fuzzy=False)
     except (ValueError, OverflowError):
         return None, True
     return parsed.date(), False
+
+
+def _extract_date_substring(text: str) -> str:
+    """Find a date-like token inside a labelled candidate (e.g. "Date of
+    Issue: 05/12/2020") and return the first one that parses as a date."""
+    for match in EMBEDDED_DATE_TOKEN.finditer(text or ""):
+        token = match.group(0).strip(" .,;:")
+        parsed, _ambiguous = parse_date_text(token)
+        if parsed is not None:
+            return token
+    return ""
+
+
+def _looks_like_date(text: str) -> bool:
+    """Heuristic: the candidate mentions a date even if it cannot be parsed
+    (e.g. "SEPTEMBER 2020"). Filters out non-date noise like "Firma-123"."""
+    if MONTH_NAME.search(text or ""):
+        return True
+    return bool(re.search(r"\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}", text or ""))
+
+
+def _entity_ordered_date(token: str, certificate: Certificate) -> date | None:
+    """Re-parse an ambiguous numeric date using the issuing entity's
+    day/month convention (Entity.date_order)."""
+    match = NUMERIC_DATE.match(token.strip())
+    if match is None:
+        return None
+    entity = certificate.entity
+    if entity is None or entity.date_order not in (
+        Entity.DateOrder.DAY_FIRST,
+        Entity.DateOrder.MONTH_FIRST,
+    ):
+        return None
+    first, second, year = (int(part) for part in match.groups())
+    if len(match.group(3)) == 2:
+        year += 2000 if year < 70 else 1900
+    dayfirst = entity.date_order == Entity.DateOrder.DAY_FIRST
+    if dayfirst:
+        return _numeric_date(year, second, first)
+    return _numeric_date(year, first, second)
 
 
 DATE_FIELD_BY_ROLE = {
@@ -288,13 +360,24 @@ def apply_dates(certificate: Certificate) -> list[str]:
             continue
         role = str(candidate.get("role") or "unknown")
         field_name = DATE_FIELD_BY_ROLE.get(role, "detected_date")
-        parsed, ambiguous = parse_date_text(text)
+        token = text
+        parsed, ambiguous = parse_date_text(token)
+        if parsed is None:
+            token = _extract_date_substring(text)
+            if token:
+                parsed, ambiguous = parse_date_text(token)
 
         if parsed is None:
-            originals.setdefault("detected_date", text)
-            if "ambiguous_date" not in reasons:
-                reasons.append("ambiguous_date")
+            if _looks_like_date(text):
+                originals.setdefault("detected_date", text)
+                if "ambiguous_date" not in reasons:
+                    reasons.append("ambiguous_date")
             continue
+
+        if ambiguous:
+            ordered = _entity_ordered_date(token, certificate)
+            if ordered is not None:
+                parsed, ambiguous = ordered, False
 
         if ambiguous or role == "unknown":
             field_name = "detected_date"

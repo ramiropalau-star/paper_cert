@@ -42,6 +42,7 @@ Main sheet **Certificados** — approved records only, one row per certificate:
 | Column | Source |
 | --- | --- |
 | Alumno | `student_name` |
+| NPA | parsed from `original_filename` (`<año>ERASMUS<NPA>_...`) |
 | Idioma | catalog language name, else literal |
 | Nivel | literal level text |
 | Nivel MCER | normalized CEFR level |

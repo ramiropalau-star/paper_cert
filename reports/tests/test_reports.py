@@ -73,7 +73,14 @@ def _rows(ws) -> list[list]:
 def test_workbook_headers_and_approved_rows():
     eng = Language.objects.get(code="eng")
     cambridge = Entity.objects.get(name="Cambridge English")
-    cert = make_certificate(make_document(1), language=eng, entity=cambridge)
+    cert = make_certificate(
+        make_document(
+            1,
+            original_filename="2027ERASMUSWF29402_I.Certificado_Idioma_E.pdf",
+        ),
+        language=eng,
+        entity=cambridge,
+    )
 
     content = build_workbook([cert], [])
     workbook = load_workbook(io.BytesIO(content))
@@ -81,8 +88,9 @@ def test_workbook_headers_and_approved_rows():
     assert workbook.sheetnames == ["Certificados", "Pendientes de revisión"]
     main = workbook["Certificados"]
     rows = _rows(main)
-    assert rows[0][:9] == [
+    assert rows[0][:10] == [
         "Alumno",
+        "NPA",
         "Idioma",
         "Nivel",
         "Nivel MCER",
@@ -92,12 +100,12 @@ def test_workbook_headers_and_approved_rows():
         "Certificado o examen",
         "Puntuación",
     ]
-    assert rows[0][9:12] == [
+    assert rows[0][10:13] == [
         "Estado",
         "Fecha de procesamiento",
         "Referencia al documento",
     ]
-    assert rows[0][12:] == [
+    assert rows[0][13:] == [
         "Nombre del fichero",
         "Código de certificado",
         "Centro de examen",
@@ -106,10 +114,11 @@ def test_workbook_headers_and_approved_rows():
     ]
     assert len(rows) == 2
     assert rows[1][0] == "Ada Lovelace"
-    assert rows[1][12] == "cert-1.pdf"
-    assert rows[1][1] == "English" or rows[1][1] == eng.name
-    assert main["G2"].value.date() == date(2024, 5, 12)
-    assert main["G2"].number_format  # date-formatted cell
+    assert rows[1][1] == "WF29402"
+    assert rows[1][13] == "2027ERASMUSWF29402_I.Certificado_Idioma_E.pdf"
+    assert rows[1][2] == "English" or rows[1][2] == eng.name
+    assert main["H2"].value.date() == date(2024, 5, 12)
+    assert main["H2"].number_format  # date-formatted cell
     assert main.auto_filter.ref
 
 
@@ -130,8 +139,8 @@ def test_workbook_pending_sheet_separate():
     assert len(pending_rows) == 2
     assert main_rows[1][0] == "Ada Lovelace"
     assert pending_rows[1][0] == "Grace Hopper"
-    assert pending_rows[1][9] == "Pendiente de revisión"
-    assert main_rows[1][9] == "Aprobado"
+    assert pending_rows[1][10] == "Pendiente de revisión"
+    assert main_rows[1][10] == "Aprobado"
 
 
 def test_workbook_without_pending_sheet_when_disabled():
@@ -362,8 +371,8 @@ def test_rejected_sheet_includes_rejection_reason():
     assert workbook.sheetnames == ["Certificados", "Rechazados"]
     rows = _rows(workbook["Rechazados"])
     assert rows[1][0] == "Rejected Person"
-    assert rows[1][9] == "Rechazado"
-    assert rows[1][16] == "Documento ilegible"
+    assert rows[1][10] == "Rechazado"
+    assert rows[1][17] == "Documento ilegible"
 
 
 def test_generate_report_includes_rejected_sheet(client, monkeypatch, tmp_path):
@@ -395,4 +404,4 @@ def test_generate_report_includes_rejected_sheet(client, monkeypatch, tmp_path):
     workbook = load_workbook(job.artifact_path)
     assert "Rechazados" in workbook.sheetnames
     rows = _rows(workbook["Rechazados"])
-    assert rows[1][16] == "No es un certificado de idioma"
+    assert rows[1][17] == "No es un certificado de idioma"

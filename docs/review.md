@@ -14,6 +14,10 @@ Only approved records enter the main Excel report.
 - **Nivel**: CEFR level or literal level text.
 - **Fecha de expedición**: exact date (`YYYY-MM-DD`).
 
+The list also shows the student **NPA**, parsed from the original filename
+(`<año>ERASMUS<NPA>_...`, e.g. `2027ERASMUSWF29402_I....pdf` → `WF29402`);
+files without that pattern show `—`.
+
 Filters combine with AND semantics. The same filters (plus an
 **Organismo emisor** text filter) are available in the gallery.
 

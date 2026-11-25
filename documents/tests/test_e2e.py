@@ -294,6 +294,8 @@ def test_non_certificate_labeled_otros():
 
 def test_ambiguous_date_triggers_review():
     payload = payload_dict()
+    # IELTS has no seeded date_order, so day/month stays ambiguous.
+    payload["entity"] = field("IELTS")
     payload["dates"] = [
         {
             "text": "05/06/2024",

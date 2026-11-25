@@ -54,14 +54,23 @@ never converted across exams.
 
 ## Dates
 
-Extraction returns date candidates `{text, role, page, quote}`. Each text
-is parsed with explicit formats plus `dateutil`; results are stored as
-`YYYY-MM-DD` in `issue_date`, `exam_date`, `result_date`, or `detected_date`.
-Original wording is retained in `date_texts["originals"]`.
+Extraction returns date candidates `{text, role, page, quote}` where `text`
+should contain only the date value. Each text is parsed with explicit
+formats plus `dateutil` (which is only trusted when the text carries both a
+day and a year — month-year strings like "SEPTEMBER 2020" are never
+fabricated into a full date). Results are stored as `YYYY-MM-DD` in
+`issue_date`, `exam_date`, `result_date`, or `detected_date`. Original
+wording is retained in `date_texts["originals"]`.
 
-- `role = unknown`, ambiguous day/month order (e.g. `05/06/2024`), or
-  unparseable text → `detected_date` and the `ambiguous_date` review
-  reason. Ambiguous numeric dates are interpreted day-first.
+- Candidates that embed a date inside a label (e.g. "Date of Issue:
+  05/12/2020") have the date token extracted before parsing.
+- `role = unknown`, ambiguous day/month order, or unparseable text →
+  `detected_date` and the `ambiguous_date` review reason.
+- Ambiguous numeric dates (e.g. `05/06/2024`) are disambiguated by the
+  resolved entity's `date_order` field (`dmy` or `mdy`, seeded per
+  catalog entity — `dmy` for European bodies, `mdy` for ETS/TOEIC/
+  Duolingo/Michigan). Entities without `date_order` keep the date in
+  `detected_date` for review.
 - The first parseable candidate per field wins.
 
 ## Review reasons
@@ -91,11 +100,13 @@ record. Label failures never block processing.
 The catalog includes `Equivalence` rows transcribed from the UV "Taula
 d'Equivalències L2" (source `UV L2`), extracted from the published PDF by
 page coordinates, that map an exam — optionally within a score band — to
-its accredited CEFR level. Coverage includes English, Spanish, German,
-French, Italian, Portuguese, Russian, and Chinese sections; exams whose
-cells could not be mapped reliably (TOEIC, TCF, GESE spoken, CILS/CELI
-granular levels, SIELE, UNICERT, EOI) have no equivalence and route to
-review for manual assignment. After CEFR resolution,
+its accredited CEFR level. Coverage spans the English, Spanish, German,
+French, Italian, Portuguese, Russian, and Chinese sections of the table,
+including score-banded exams (BULATS, IELTS, PTE, TOEFL, TOEIC, TCF,
+esPro, Oxford Test of English) and level-named exams across all
+languages. Exams still without equivalence (EOI school certificates,
+SIELE, TEF score variants, DSD dual-level, LCCIEB/ELSA granular tests)
+route to review for manual assignment. After CEFR resolution,
 `apply_equivalence` stores the accredited level in
 `certificate.equivalence`:
 

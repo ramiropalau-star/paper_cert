@@ -10,6 +10,7 @@ from catalog.models import (
     EntityAlias,
     Equivalence,
     Exam,
+    ExamAlias,
     Language,
     LanguageAlias,
 )
@@ -26,13 +27,13 @@ LANGUAGES = [
         "code": "fra",
         "name": "French",
         "name_es": "Francés",
-        "aliases": ["French", "Francés", "Frances"],
+        "aliases": ["French", "Francés", "Frances", "Français", "Francaise", "frangaise"],
     },
     {
         "code": "deu",
         "name": "German",
         "name_es": "Alemán",
-        "aliases": ["German", "Alemán", "Aleman"],
+        "aliases": ["German", "Alemán", "Aleman", "Deutsch", "Deutsche"],
     },
     {
         "code": "spa",
@@ -82,6 +83,7 @@ LANGUAGES = [
 ENTITIES = [
     {
         "name": "ETS",
+        "date_order": "mdy",
         "aliases": ["ETS", "Educational Testing Service"],
         "exams": [
             ("TOEFL iBT", "eng"),
@@ -91,22 +93,44 @@ ENTITIES = [
     },
     {
         "name": "TOEIC",
-        "aliases": ["TOEIC"],
-        "exams": [("TOEIC Listening and Reading", "eng"), ("TOEIC Speaking and Writing", "eng")],
+        "date_order": "mdy",
+        "aliases": ["TOEIC", "Test of English for International Communication"],
+        "exams": [
+            ("TOEIC", "eng"),
+            ("TOEIC Listening and Reading", "eng"),
+            ("TOEIC Speaking and Writing", "eng"),
+        ],
     },
     {
         "name": "Cambridge English",
+        "date_order": "dmy",
         "aliases": [
             "Cambridge English",
             "Cambridge Assessment English",
+            "Cambridge Assessment",
+            "Cambridge University Press & Assessment",
+            "Council of Europe, Cambridge University Press & Assessment",
             "Cambridge",
         ],
         "exams": [
-            ("A2 Key", "eng"),
-            ("B1 Preliminary", "eng"),
-            ("B2 First", "eng"),
-            ("C1 Advanced", "eng"),
-            ("C2 Proficiency", "eng"),
+            ("A2 Key", "eng", ["Key English Test", "KET"]),
+            ("B1 Preliminary", "eng", ["Preliminary English Test", "PET"]),
+            ("B2 First", "eng", ["First Certificate in English", "First Certificate", "FCE"]),
+            (
+                "C1 Advanced",
+                "eng",
+                [
+                    "Advanced English",
+                    "Certificate in Advanced English",
+                    "Certificate in Advanced English / C1 Advanced",
+                    "CAE",
+                ],
+            ),
+            (
+                "C2 Proficiency",
+                "eng",
+                ["Certificate of Proficiency in English", "CPE"],
+            ),
             ("BEC Preliminary", "eng"),
             ("BEC Vantage", "eng"),
             ("BEC Higher", "eng"),
@@ -129,6 +153,7 @@ ENTITIES = [
     },
     {
         "name": "Pearson",
+        "date_order": "dmy",
         "aliases": ["Pearson", "Pearson PTE", "PTE"],
         "exams": [
             ("PTE Academic", "eng"),
@@ -143,6 +168,7 @@ ENTITIES = [
     },
     {
         "name": "LanguageCert",
+        "date_order": "dmy",
         "aliases": ["LanguageCert", "Language Cert"],
         "exams": [
             ("LanguageCert International ESOL", "eng"),
@@ -156,29 +182,43 @@ ENTITIES = [
     },
     {
         "name": "Duolingo English Test",
+        "date_order": "mdy",
         "aliases": ["Duolingo", "Duolingo English Test", "DET"],
         "exams": [("Duolingo English Test", "eng")],
     },
     {
         "name": "Trinity College London",
-        "aliases": ["Trinity College London", "Trinity"],
+        "date_order": "dmy",
+        "aliases": [
+            "Trinity College London",
+            "Trinity",
+            "Trinity College London - Integrated Skills in English",
+        ],
         "exams": [
-            ("ISE", "eng"),
+            (
+                "ISE",
+                "eng",
+                ["Integrated Skills in English", "Integrated Skills in English (ISE)"],
+            ),
             ("GESE", "eng"),
             ("ISE 0", "eng"),
             ("ISE I", "eng"),
             ("ISE II", "eng"),
             ("ISE III", "eng"),
             ("ISE IV", "eng"),
-        ],
+        ]
+        + [(f"GESE Grade {grade}", "eng") for grade in range(1, 13)]
+        + [(f"SEW {level}", "eng") for level in ("B1", "B2", "B2+", "C1")],
     },
     {
         "name": "OET",
+        "date_order": "dmy",
         "aliases": ["OET", "Occupational English Test"],
         "exams": [("OET", "eng")],
     },
     {
         "name": "France Éducation international",
+        "date_order": "dmy",
         "aliases": [
             "France Éducation international",
             "France Education International",
@@ -199,17 +239,59 @@ ENTITIES = [
     },
     {
         "name": "CCI Paris Île-de-France",
+        "date_order": "dmy",
         "aliases": [
             "CCI Paris Île-de-France",
             "CCI Paris Ile-de-France",
             "Chambre de Commerce et d'Industrie de Paris",
         ],
-        "exams": [("TEF", "fra")],
+        "exams": [("TEF", "fra")]
+        + [(f"DFP {level}", "fra") for level in ("A1", "A2", "B1", "B2", "C1", "C2")],
+    },
+    {
+        "name": "Alliance Française",
+        "date_order": "dmy",
+        "aliases": ["Alliance Française", "Alliance Francaise"],
+        "exams": [
+            ("CEFP 1", "fra", ["Certificat d'Études de Français Pratique 1"]),
+            ("CEFP 2", "fra", ["Certificat d'Études de Français Pratique 2"]),
+            ("DS", "fra", ["Diplôme Supérieur d'Études Françaises Modernes"]),
+            ("DHEF", "fra", ["Diplôme des Hautes Études Françaises"]),
+        ],
+    },
+    {
+        "name": "Diplômes d'Université",
+        "date_order": "dmy",
+        "aliases": ["Diplômes d'Université", "Diplomes d'Universite", "DU"],
+        "exams": [
+            (f"{family} {level}", "fra")
+            for family in ("DUEF", "DULF")
+            for level in ("A1", "A2", "B1", "B2", "C1", "C2")
+        ]
+        + [(f"CPLF {level}", "fra") for level in ("B1", "B2", "C1", "C2")]
+        + [
+            ("DEF B2", "fra"),
+            ("DAEF C1", "fra"),
+            ("DAEF C2", "fra"),
+            ("DSEF C1", "fra"),
+            ("DSEF C2", "fra"),
+            ("DUSEF C2", "fra"),
+        ],
     },
     {
         "name": "Goethe-Institut",
+        "date_order": "dmy",
         "aliases": ["Goethe-Institut", "Goethe Institut", "Goethe"],
         "exams": [
+            ("Start Deutsch 1", "deu"),
+            ("Start Deutsch 2", "deu"),
+            ("Zertifikat Deutsch", "deu", ["ZD", "Zertifikat Deutsch (ZD)"]),
+            ("ZDJ", "deu", ["Zertifikat Deutsch für Jugendliche"]),
+            ("DAF", "deu", ["Deutsch als Fremdsprache"]),
+            ("GDS", "deu", ["Großes Deutsches Sprachdiplom"]),
+            ("ZOP", "deu", ["Zentrale Oberstufenprüfung"]),
+            ("KDS", "deu", ["Kleines Deutsches Sprachdiplom"]),
+            ("BULATS", "deu"),
             ("Goethe-Zertifikat B1", "deu"),
             ("Goethe-Zertifikat B2", "deu"),
             ("Goethe-Zertifikat C1", "deu"),
@@ -218,16 +300,25 @@ ENTITIES = [
     },
     {
         "name": "telc gGmbH",
-        "aliases": ["telc", "telc gGmbH"],
+        "date_order": "dmy",
+        "aliases": ["telc", "telc gGmbH", "The European Language Certificates"],
         "exams": [
             ("telc B1", "deu"),
             ("telc B2", "deu"),
             ("telc C1", "deu"),
             ("telc Deutsch A1", "deu"),
             ("telc Deutsch A2", "deu"),
+            ("telc Deutsch B1", "deu"),
             ("telc Deutsch B2", "deu"),
+            ("telc Deutsch B2-Beruf", "deu", ["Telc Deutsch B2 – Beruf"]),
             ("telc Deutsch C1", "deu"),
             ("telc Deutsch C2", "deu"),
+            ("telc English A1", "eng"),
+            ("telc English A2", "eng"),
+            ("telc English B1", "eng"),
+            ("telc English B2", "eng"),
+            ("telc English C1", "eng"),
+            ("telc English C2", "eng"),
             ("telc Français A1", "fra"),
             ("telc Français A2", "fra"),
             ("telc Français B1", "fra"),
@@ -240,100 +331,134 @@ ENTITIES = [
             ("telc Italiano B2", "ita"),
             ("telc Italiano C1", "ita"),
             ("telc Italiano C2", "ita"),
+            ("telc Português B1", "por"),
         ],
     },
     {
         "name": "TestDaF-Institut",
+        "date_order": "dmy",
         "aliases": ["TestDaF", "TestDaF-Institut"],
         "exams": [("TestDaF", "deu")],
     },
     {
         "name": "ÖSD",
+        "date_order": "dmy",
         "aliases": ["ÖSD", "OSD", "Österreichisches Sprachdiplom"],
         "exams": [
-            ("ÖSD B1", "deu"),
-            ("ÖSD B2", "deu"),
-            ("ÖSD C1", "deu"),
-            ("ÖSD A1", "deu"),
-            ("ÖSD A2", "deu"),
-            ("ÖSD C2", "deu"),
+            (
+                "ÖSD A1",
+                "deu",
+                ["A1 Grundstufe Deutsch 1", "GD1", "ÖSD GD1"],
+            ),
+            (
+                "ÖSD A2",
+                "deu",
+                ["A2 Grundstufe Deutsch 2", "GD2", "ÖSD GD2"],
+            ),
+            ("ÖSD B1", "deu", ["B1 Zertifikat", "ZD", "ÖSD ZD"]),
+            ("ÖSD B2", "deu", ["Mittelstufe Deutsch", "MD", "ÖSD MD"]),
+            ("ÖSD C1", "deu", ["Oberstufe Deutsch", "OD", "ÖSD OD"]),
+            ("ÖSD C2", "deu", ["Wirtschaftssprache Deutsch", "WD", "ÖSD WD"]),
         ],
     },
     {
         "name": "DSH",
+        "date_order": "dmy",
         "aliases": ["DSH", "Deutsche Sprachprüfung für den Hochschulzugang"],
         "exams": [("DSH", "deu"), ("DSH-1", "deu"), ("DSH-2", "deu"), ("DSH-3", "deu")],
     },
     {
         "name": "g.a.s.t.",
+        "date_order": "dmy",
         "aliases": ["g.a.s.t.", "gast", "DTZ"],
         "exams": [("DTZ", "deu")],
     },
     {
         "name": "Instituto Cervantes",
+        "date_order": "dmy",
         "aliases": ["Instituto Cervantes", "Cervantes"],
         "exams": [("DELE", "spa")]
         + [(f"DELE {level}", "spa") for level in ("A1", "A2", "B1", "B2", "C1", "C2")],
     },
     {
         "name": "SIELE",
+        "date_order": "dmy",
         "aliases": ["SIELE"],
         "exams": [("SIELE Global", "spa")],
     },
     {
         "name": "CELU",
+        "date_order": "dmy",
         "aliases": ["CELU"],
         "exams": [("CELU", "spa")],
     },
     {
         "name": "Università per Stranieri di Siena",
+        "date_order": "dmy",
         "aliases": [
             "Università per Stranieri di Siena",
             "Universita per Stranieri di Siena",
             "CILS",
         ],
-        "exams": [("CILS", "ita")],
+        "exams": [
+            ("CILS", "ita"),
+            ("CILS Due-B2", "ita"),
+            ("CILS Tre-C1", "ita"),
+            ("CILS Quattro-C2", "ita"),
+        ],
     },
     {
         "name": "Università per Stranieri di Perugia",
+        "date_order": "dmy",
         "aliases": [
             "Università per Stranieri di Perugia",
             "Universita per Stranieri di Perugia",
             "CELI",
         ],
-        "exams": [("CELI", "ita")],
+        "exams": [("CELI", "ita")]
+        + [("CELI Impatto", "ita")]
+        + [(f"CELI {level}", "ita") for level in range(1, 6)],
     },
     {
         "name": "Società Dante Alighieri",
+        "date_order": "dmy",
         "aliases": ["Società Dante Alighieri", "Societa Dante Alighieri", "PLIDA"],
         "exams": [("PLIDA", "ita")]
-        + [(f"PLIDA {level}", "ita") for level in ("A1", "A2", "B1", "B2", "C1", "C2")],
+        + [(f"PLIDA {level}", "ita") for level in ("A1", "A2", "B1", "B2", "C1", "C2")]
+        + [("PLIDA Commerciale B2", "ita"), ("PLIDA Commerciale C1", "ita")],
     },
     {
         "name": "Università degli Studi Roma Tre",
+        "date_order": "dmy",
         "aliases": [
             "Università degli Studi Roma Tre",
             "Universita degli Studi Roma Tre",
             "Cert.IT",
             "CertIT",
         ],
-        "exams": [("Cert.IT", "ita")],
+        "exams": [("Cert.IT", "ita"), ("Int IT", "ita"), ("IT", "ita")],
     },
     {
         "name": "CAPLE",
-        "aliases": ["CAPLE", "Centro de Avaliação de Português Língua Estrangeira"],
+        "date_order": "dmy",
+        "aliases": [
+            "CAPLE",
+            "Centro de Avaliação de Português Língua Estrangeira",
+            "Universidade de Lisboa",
+        ],
         "exams": [
             ("CAPLE", "por"),
-            ("CAPLE ACESSO", "por"),
-            ("CAPLE CIPLE", "por"),
-            ("CAPLE DEPLE", "por"),
-            ("CAPLE DIPLE", "por"),
-            ("CAPLE DAPLE", "por"),
-            ("CAPLE DUPLE", "por"),
+            ("CAPLE ACESSO", "por", ["ACESSO", "Certificado de Acesso ao Português"]),
+            ("CAPLE CIPLE", "por", ["CIPLE", "Certificado Inicial de Português Língua Estrangeira"]),
+            ("CAPLE DEPLE", "por", ["DEPLE", "Diploma Elementar de Português Língua Estrangeira"]),
+            ("CAPLE DIPLE", "por", ["DIPLE", "Diploma Intermédio de Português Língua Estrangeira"]),
+            ("CAPLE DAPLE", "por", ["DAPLE", "Diploma Avançado de Português Língua Estrangeira"]),
+            ("CAPLE DUPLE", "por", ["DUPLE", "Diploma Universitário de Português Língua Estrangeira"]),
         ],
     },
     {
         "name": "CELPE-Bras",
+        "date_order": "dmy",
         "aliases": ["CELPE-Bras", "CELPE Bras", "INEP"],
         "exams": [
             ("CELPE-Bras", "por"),
@@ -346,16 +471,24 @@ ENTITIES = [
     # Entities from the UV L2 equivalence table
     {
         "name": "Oxford University Press",
-        "aliases": ["Oxford University Press", "Oxford", "Oxford Test of English"],
+        "date_order": "dmy",
+        "aliases": [
+            "Oxford University Press",
+            "University of Oxford, Oxford University Press",
+            "Oxford",
+            "Oxford Test of English",
+        ],
         "exams": [("Oxford Test of English", "eng")],
     },
     {
         "name": "APTIS",
+        "date_order": "dmy",
         "aliases": ["APTIS", "British Council"],
         "exams": [(f"APTIS {level}", "eng") for level in ("A1", "A2", "B1", "B2", "C1", "C2")],
     },
     {
         "name": "Anglia Ascentis",
+        "date_order": "dmy",
         "aliases": ["Anglia", "Anglia Ascentis", "Anglia ESOL"],
         "exams": [
             ("Anglia Preliminary", "eng"),
@@ -368,6 +501,7 @@ ENTITIES = [
     },
     {
         "name": "Edexcel",
+        "date_order": "dmy",
         "aliases": ["Edexcel", "Pearson Edexcel"],
         "exams": [
             ("Edexcel Entry 1", "eng"),
@@ -380,21 +514,25 @@ ENTITIES = [
     },
     {
         "name": "Universidad de Salamanca esPro",
+        "date_order": "dmy",
         "aliases": ["esPro", "Universidad de Salamanca"],
         "exams": [("esPro", "spa")],
     },
     {
         "name": "CLES",
+        "date_order": "dmy",
         "aliases": ["CLES", "Certificat de Compétences en Langues de l'Enseignement Supérieur"],
         "exams": [("CLES 1", "fra"), ("CLES 2", "fra"), ("CLES 3", "fra")],
     },
     {
         "name": "Alexander Pushkin",
+        "date_order": "dmy",
         "aliases": ["Alexander Pushkin", "Pushkin", "TORFL", "TRKI"],
         "exams": [(f"TORFL {level}", "rus") for level in ("A1", "A2", "B1", "B2", "C1", "C2")],
     },
     {
         "name": "TRKI",
+        "date_order": "dmy",
         "aliases": ["TRKI", "Test of Russian as a Foreign Language"],
         "exams": [
             ("TRKI E", "rus"),
@@ -407,6 +545,7 @@ ENTITIES = [
     },
     {
         "name": "Hanban",
+        "date_order": "dmy",
         "aliases": ["Hanban", "HSK", "Confucius Institute"],
         "exams": [
             ("HSK I", "zho"),
@@ -422,6 +561,7 @@ ENTITIES = [
     },
     {
         "name": "Junta Qualificadora de Coneixements de València",
+        "date_order": "dmy",
         "aliases": [
             "Junta Qualificadora de Coneixements de València",
             "Junta Qualificadora de Coneixements de Valencia",
@@ -437,6 +577,127 @@ ENTITIES = [
             ("Nivell Mitjà de Valencià", "val"),
             ("Nivell Superior de Valencià", "val"),
         ],
+    },
+    # Entities from the UV L2 table that had no seed entry yet
+    {
+        "name": "AQA",
+        "date_order": "dmy",
+        "aliases": [
+            "AQA",
+            "Assessment and Qualifications Alliance",
+            "AQA Qualifications",
+        ],
+        "exams": [
+            ("JET Foundation", "eng"),
+            ("JET 1", "eng"),
+            ("JET 2", "eng"),
+            ("JET 3", "eng"),
+            ("JET 4", "eng"),
+            ("SET 1", "eng"),
+            ("SET 2", "eng"),
+        ],
+    },
+    {
+        "name": "TOLES",
+        "date_order": "dmy",
+        "aliases": ["TOLES", "Test of Legal English"],
+        "exams": [
+            ("TOLES Intermediate", "eng"),
+            ("TOLES Pre-Advanced", "eng"),
+            ("TOLES Upper Intermediate", "eng"),
+        ],
+    },
+    {
+        "name": "English Speaking Board",
+        "date_order": "dmy",
+        "aliases": ["English Speaking Board", "EAL/ESOL", "ESB"],
+        "exams": [
+            ("EAL/ESOL Entry 1", "eng"),
+            ("EAL/ESOL Entry 2", "eng"),
+            ("EAL/ESOL Entry 3", "eng"),
+            ("EAL/ESOL Level 1", "eng"),
+            ("EAL/ESOL Level 2", "eng"),
+            ("EAL/ESOL Level 3", "eng"),
+        ],
+    },
+    {
+        "name": "University of Michigan",
+        "date_order": "mdy",
+        "aliases": [
+            "University of Michigan",
+            "Cambridge Michigan Language Assessments",
+            "Michigan Language Assessments",
+        ],
+        "exams": [
+            ("ECCE", "eng", ["Certificate of Competency in English"]),
+            ("ECPE", "eng", ["Certificate of Proficiency in English (ECPE)"]),
+        ],
+    },
+    {
+        "name": "UNICERT",
+        "date_order": "dmy",
+        "aliases": ["UNICERT"],
+        "exams": [
+            ("UNICERT Basis", None),
+            ("UNICERT Level 1", None),
+            ("UNICERT Level 2", None),
+            ("UNICERT Level 3", None),
+            ("UNICERT Level 4", None),
+        ],
+    },
+    {
+        "name": "General Certificate of Secondary Education",
+        "date_order": "dmy",
+        "aliases": [
+            "General Certificate of Secondary Education",
+            "GCSE",
+            "A-Level",
+            "A Level",
+        ],
+        "exams": [
+            ("GCSE Grades A-C", "eng"),
+            ("GCSE Higher Pass Grades A-C", "eng"),
+            ("A-Level", "eng"),
+        ],
+    },
+    {
+        "name": "EOI",
+        "date_order": "dmy",
+        "aliases": [
+            "EOI",
+            "Escola Oficial d'Idiomes",
+            "Escoles Oficials d'Idiomes",
+        ],
+        "exams": [
+            (
+                "EOI Nivell C1",
+                None,
+                [
+                    "certificación del nivel c1",
+                    "certificat de nivell c1",
+                    "certificado de nivel c1",
+                ],
+            ),
+            (
+                "EOI Nivell C2",
+                None,
+                [
+                    "certificación del nivel c2",
+                    "certificat de nivell c2",
+                    "certificado de nivel c2",
+                ],
+            ),
+        ],
+    },
+    {
+        "name": "Ensenyaments d'idiomes",
+        "date_order": "dmy",
+        "aliases": [
+            "Ensenyaments d'idiomes",
+            "prova d'idiomes",
+            "Prova de Coneixements Lingüístics",
+        ],
+        "exams": [("Certificat de prova d'idiomes", None)],
     },
 ]
 
@@ -480,19 +741,31 @@ class Command(BaseCommand):
 
         exam_by_key: dict[tuple[str, str], Exam] = {}
         for data in ENTITIES:
-            entity, _ = Entity.objects.get_or_create(name=data["name"])
+            entity_defaults: dict = {}
+            if "date_order" in data:
+                entity_defaults["date_order"] = data["date_order"]
+            entity, _ = Entity.objects.update_or_create(
+                name=data["name"], defaults=entity_defaults
+            )
             for alias in data["aliases"]:
                 EntityAlias.objects.get_or_create(
                     normalized_alias=normalize_catalog_text(alias),
                     defaults={"entity": entity, "alias": alias},
                 )
-            for exam_name, language_code in data["exams"]:
+            for exam_entry in data["exams"]:
+                exam_name, language_code = exam_entry[0], exam_entry[1]
+                exam_aliases = exam_entry[2] if len(exam_entry) > 2 else []
                 exam, _ = Exam.objects.get_or_create(
                     entity=entity,
                     name=exam_name,
-                    defaults={"language": language_by_code[language_code]},
+                    defaults={"language": language_by_code.get(language_code)},
                 )
                 exam_by_key[(entity.name, exam.name)] = exam
+                for alias in exam_aliases:
+                    ExamAlias.objects.get_or_create(
+                        normalized_alias=normalize_catalog_text(alias),
+                        defaults={"exam": exam, "alias": alias},
+                    )
 
         for entity_name, exam_name, score_min, score_max, level, reference in CEFR_PLACEHOLDERS:
             exam = exam_by_key.get((entity_name, exam_name))

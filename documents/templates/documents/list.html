@@ -55,6 +55,7 @@
       <thead>
         <tr>
           <th>Archivo</th>
+          <th>NPA</th>
           <th>Alumno</th>
           <th>Idioma</th>
           <th>Entidad</th>
@@ -73,6 +74,7 @@
           {% with certificate=document.certificate %}
           <tr>
             <td><a href="{% url 'documents:detail' document.pk %}">{{ document.original_filename }}</a></td>
+            <td>{{ document.npa|default:"—" }}</td>
             {% if certificate %}
               <td>{{ certificate.student_name|default:"—" }}</td>
               <td>{{ certificate.language.name|default:certificate.language_literal|default:"—" }}</td>
@@ -103,7 +105,7 @@
           </tr>
           {% endwith %}
         {% empty %}
-          <tr><td colspan="12">No hay documentos para los filtros seleccionados.</td></tr>
+          <tr><td colspan="13">No hay documentos para los filtros seleccionados.</td></tr>
         {% endfor %}
       </tbody>
     </table>
