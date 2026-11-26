@@ -3,21 +3,31 @@
 import os
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 from django.core.management import call_command
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 
 class Command(BaseCommand):
     help = "Run migrations, seed roles/catalog, and create the admin user."
 
     def handle(self, *args, **options):
+        username = os.environ.get("DJANGO_SUPERUSER_USERNAME", "").strip()
+        password = os.environ.get("DJANGO_SUPERUSER_PASSWORD", "")
+        email = os.environ.get("DJANGO_SUPERUSER_EMAIL", "")
+        if username and password and os.environ.get("BOOTSTRAP_ALLOW_WEAK_PASSWORD") != "1":
+            try:
+                validate_password(password)
+            except Exception as exc:
+                raise CommandError(
+                    f"DJANGO_SUPERUSER_PASSWORD failed validation: {exc}. "
+                    "Set BOOTSTRAP_ALLOW_WEAK_PASSWORD=1 to bypass (test only)."
+                ) from exc
+
         call_command("migrate", verbosity=0)
         call_command("seed_roles", verbosity=0)
         call_command("seed_catalog", verbosity=0)
 
-        username = os.environ.get("DJANGO_SUPERUSER_USERNAME", "").strip()
-        password = os.environ.get("DJANGO_SUPERUSER_PASSWORD", "")
-        email = os.environ.get("DJANGO_SUPERUSER_EMAIL", "")
         if username and password:
             user_model = get_user_model()
             if user_model.objects.filter(username=username).exists():

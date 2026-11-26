@@ -13,6 +13,15 @@ Role groups are created idempotently:
 .venv/bin/python manage.py seed_roles
 ```
 
+## Deployment credentials
+
+`deploy.sh` generates random values for every secret on first deploy,
+including the Django/Paperless admin password (override with
+`DEPLOY_ADMIN_PASSWORD` only when you must). The password is written to
+`.env` and never printed. `manage.py bootstrap` validates the superuser
+password against Django's password validators and aborts on weak values;
+`BOOTSTRAP_ALLOW_WEAK_PASSWORD=1` bypasses this for local tests only.
+
 ## Roles
 
 Roles are Django groups. The hierarchy is cumulative:

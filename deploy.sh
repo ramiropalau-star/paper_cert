@@ -6,7 +6,8 @@
 #
 # Optional env overrides:
 #   DEPLOY_HOST=192.168.1.50     public IP/hostname (default: auto-detect)
-#   DEPLOY_ADMIN_PASSWORD=admin  Django + Paperless admin password (default: admin)
+#   DEPLOY_ADMIN_PASSWORD=...  Django + Paperless admin password.
+#                               Default: randomly generated (written only to .env)
 #   SKIP_MODEL=1                 skip the Ollama model pull
 #   SKIP_SMOKE=1                 skip the end-to-end smoke test
 #   FORCE_ENV=1                  regenerate .env even if it exists
@@ -59,7 +60,8 @@ FREE_GB=$(df -BG --output=avail . | tail -1 | tr -dc '0-9')
 
 HOST="${DEPLOY_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
 [ -n "$HOST" ] || die "No se pudo detectar la IP; definí DEPLOY_HOST"
-ADMIN_PASS="${DEPLOY_ADMIN_PASSWORD:-admin}"
+# Sin override se genera una password fuerte: nunca se usa un default conocido.
+ADMIN_PASS="${DEPLOY_ADMIN_PASSWORD:-$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)}"
 log "Host detectado: $HOST"
 
 # ------------------------------------------------------- GPU NVIDIA (opcional)
@@ -301,7 +303,7 @@ cat <<EOF
  Deploy completo.
    Django app:     http://$HOST:$APP_PORT   ($DJANGO_USER / ver .env)
    Paperless UI:   http://$HOST:9090               ($PAPERLESS_USER / ver .env)
-   n8n:            http://$HOST:5678
+   n8n:            http://127.0.0.1:5678  (solo loopback — N8N_BIND_ADDR para LAN/proxy)
    Inbox folder:   ./inbox/  (copiá archivos ahí)
 ============================================================
 EOF

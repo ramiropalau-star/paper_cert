@@ -1,8 +1,23 @@
 # Operations
 
-All services run under `compose.yaml`. Only `app` (port `APP_PORT`, default
-8080) and `n8n` (port 5678) publish ports; `db`, `redis`, `paperless`,
+All services run under `compose.yaml`. The `app` port (`APP_PORT`, default
+8080) is the user entry point and binds `APP_BIND_ADDR` (default `0.0.0.0`).
+The `n8n` UI (port 5678) is administrative and binds `N8N_BIND_ADDR`
+(default `127.0.0.1` — loopback only). `db`, `redis`, `paperless`,
 `ocr`, and `ollama` are reachable only on the internal `internal` network.
+
+### Port bindings
+
+Published ports accept an optional bind address via `.env`:
+
+| Variable | Default | Controls |
+| --- | --- | --- |
+| `APP_BIND_ADDR` | `0.0.0.0` | Interface/IP the app port listens on |
+| `N8N_BIND_ADDR` | `127.0.0.1` | Interface/IP the n8n UI listens on |
+
+Set `N8N_BIND_ADDR=0.0.0.0` only for direct LAN access to the n8n UI;
+prefer loopback plus an SSH tunnel or reverse proxy. After changing a bind
+address, recreate the service: `docker compose up -d n8n` (or `app`).
 
 ### Service exposure
 
@@ -148,34 +163,51 @@ docker compose exec app python manage.py provision_paperless_webhook
 
 ## Backup
 
-```bash
-# PostgreSQL dump (covers app, Paperless, and n8n databases)
-docker compose exec db pg_dumpall -U "$DB_USER" > backup-$(date +%F).sql
+`scripts/backup.sh` captures everything needed to restore the stack:
 
-# Volume archives
-docker run --rm -v paperless-certs_postgres-data:/v -v "$PWD":/backup alpine \
-  tar czf /backup/postgres-data.tgz -C /v .
-docker run --rm -v paperless-certs_paperless-data:/v -v "$PWD":/backup alpine \
-  tar czf /backup/paperless-data.tgz -C /v .
-docker run --rm -v paperless-certs_paperless-media:/v -v "$PWD":/backup alpine \
-  tar czf /backup/paperless-media.tgz -C /v .
-docker run --rm -v paperless-certs_reports:/v -v "$PWD":/backup alpine \
-  tar czf /backup/reports.tgz -C /v .
+- `db.sql.gz` — `pg_dumpall` of all PostgreSQL databases (app, Paperless,
+  n8n). This is the authoritative database backup; the `postgres-data`
+  volume is intentionally not archived.
+- One `.tar.gz` per stateful volume: `app-media`, `reports`,
+  `paperless-data`, `paperless-media`, `n8n-data`.
+
+Output goes to `./backups/<timestamp>/`. Backups older than
+`BACKUP_RETENTION_DAYS` (default `14`) are pruned automatically. The Ollama
+model volume is reproducible (`ollama pull`) and is not backed up.
+
+```bash
+./scripts/backup.sh
 ```
 
-Store dumps and archives off-host. The Ollama model volume is reproducible
-(`ollama pull`) and does not need backups.
+Schedule it daily, for example:
+
+```cron
+0 3 * * * cd /path/to/paperless && ./scripts/backup.sh >> backups/backup.log 2>&1
+```
+
+Copy `backups/` off-host (rsync, object storage, etc.) — local backups do
+not survive disk or host loss.
 
 ## Restore
 
 ```bash
 docker compose down
+# 1. Restore volumes first (while db is still down)
+for v in app-media reports paperless-data paperless-media n8n-data; do
+  docker run --rm -v "paperless-certs_$v":/v -v "$PWD/backups/<timestamp>":/backup alpine \
+    sh -c "rm -rf /v/* /v/.[!.]* 2>/dev/null; tar xzf /backup/$v.tar.gz -C /v"
+done
+# 2. Start only the database and restore the dump
 docker compose up -d db
-# restore the dump into the fresh postgres volume
-docker compose exec -T db psql -U "$DB_USER" -d postgres < backup-YYYY-MM-DD.sql
-# or restore volume archives into named volumes before `up`
+zcat backups/<timestamp>/db.sql.gz | docker compose exec -T db psql -U "$DB_USER" -d postgres
+# 3. Start the rest
 docker compose up -d
 ```
+
+`pg_dumpall` output contains `\connect <db>` directives, so pipe it
+directly to `psql -d postgres` — do not extract per-database sections
+manually. Volume names assume the default Compose project
+(`paperless-certs`); adjust if `COMPOSE_PROJECT_NAME` differs.
 
 ## Updates
 
@@ -192,11 +224,16 @@ tags make rollbacks impossible.
 ## Routine checks
 
 ```bash
+./scripts/health.sh                    # per-service health table (exit 1 if any unhealthy)
 docker compose ps                     # all services healthy
 docker compose logs -f app ocr n8n    # pipeline errors surface here
 curl -s http://localhost:8080/healthz # app liveness
 curl -s http://localhost:8080/internal/healthz -H "X-Internal-Token: $APP_INTERNAL_API_TOKEN"
 ```
+
+Container logs are bounded: every service uses the json-file driver with
+`max-size: 10m` / `max-file: 3` (see the `x-logging` anchor in
+`compose.yaml`), so logs cannot fill the disk.
 
 Documents stuck in `error` can be retried from the review UI
 (**Reprocesar**) or by replaying the n8n execution.
@@ -348,3 +385,64 @@ The workflow `App intake webhook` is provisioned in Paperless with:
 
 To recreate it manually: Paperless UI → Settings → Automation → Workflows →
 add trigger *Document Added* + action *Webhook* with the values above.
+
+## Production deployment
+
+The defaults are safe for a trusted LAN. For anything exposed beyond it,
+apply this checklist:
+
+### Credentials
+
+- `deploy.sh` generates a random admin password on first deploy; retrieve it
+  from `.env` (`DJANGO_SUPERUSER_PASSWORD`, shared with
+  `PAPERLESS_ADMIN_PASSWORD`). Change it after first login via
+  `/users/` or the Paperless UI, and update `.env` accordingly.
+- `manage.py bootstrap` validates the superuser password with Django's
+  password validators and refuses weak values. For local tests only, set
+  `BOOTSTRAP_ALLOW_WEAK_PASSWORD=1`.
+- Rotate any `change-me-*` placeholder in `.env` — `deploy.sh` already
+  generates random values for all secrets on first deploy.
+
+### HTTPS
+
+Terminate TLS at a reverse proxy and keep the containers on HTTP internally.
+Example with Caddy:
+
+```caddy
+app.example.com {
+    reverse_proxy localhost:8080    # APP_PORT
+}
+n8n.example.com {
+    reverse_proxy localhost:5678    # requires N8N_BIND_ADDR reachable by the proxy
+}
+```
+
+Then set in `.env` and recreate the app and n8n:
+
+```dotenv
+DJANGO_CSRF_TRUSTED_ORIGINS=https://app.example.com
+DJANGO_ALLOWED_HOSTS=app.example.com,localhost,127.0.0.1
+DJANGO_SECURE_COOKIES=true
+DJANGO_SECURE_SSL_REDIRECT=true   # only when the proxy sets X-Forwarded-Proto
+N8N_PROTOCOL=https
+N8N_SECURE_COOKIE=true
+```
+
+`SECURE_PROXY_SSL_HEADER` is already configured, so Django trusts
+`X-Forwarded-Proto` from the proxy. Paperless-ngx stays internal; expose
+its UI only via SSH tunnel or a separate authenticated proxy path.
+
+### Exposure
+
+- Keep `N8N_BIND_ADDR=127.0.0.1` unless you deliberately expose the n8n UI;
+  with a reverse proxy, proxy to `127.0.0.1:5678`.
+- Restrict `APP_BIND_ADDR` if the app should only be reachable through the
+  proxy (e.g. `APP_BIND_ADDR=127.0.0.1` and let the proxy connect locally).
+- `db`, `redis`, `paperless`, `ocr`, and `ollama` never publish ports.
+
+### Backups and health
+
+- Schedule `./scripts/backup.sh` via cron (see *Backup*) and copy
+  `backups/` off-host.
+- Run `./scripts/health.sh` from monitoring or cron; it exits non-zero when
+  any service is unhealthy.

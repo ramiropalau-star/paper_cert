@@ -7,4 +7,5 @@ staticfiles/
 var/
 inbox/*
 !inbox/.gitkeep
+backups/
 report-smoke.xlsx

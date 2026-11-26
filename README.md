@@ -18,8 +18,10 @@ Django 5 + PostgreSQL + Paperless-ngx (document store) + Ollama (extraction)
 ```bash
 cp .env.example .env
 # edit .env: replace every change-me-* value (deploy.sh generates random
-# secrets on first deploy) and set N8N_PROTOCOL to the public scheme of the
-# n8n UI (http locally, https behind a reverse proxy)
+# secrets — including the admin password — on first deploy) and set
+# N8N_PROTOCOL to the public scheme of the n8n UI (http locally, https
+# behind a reverse proxy). The n8n UI binds to 127.0.0.1 by default;
+# set N8N_BIND_ADDR=0.0.0.0 for direct LAN access.
 
 ./deploy.sh   # one-shot: env, build, bootstrap, workflows, smoke test
 

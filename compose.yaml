@@ -1,9 +1,16 @@
 name: paperless-certs
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
 services:
   db:
     image: postgres:17.6-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: ${DB_USER:-paperless}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
@@ -24,6 +31,7 @@ services:
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
+    logging: *default-logging
     networks: [internal]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -37,6 +45,7 @@ services:
   paperless:
     image: ghcr.io/paperless-ngx/paperless-ngx:3.3.1
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       db:
         condition: service_healthy
@@ -80,6 +89,7 @@ services:
   ollama:
     image: ollama/ollama:0.5.7
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - ollama-models:/root/.ollama
     deploy:
@@ -99,6 +109,7 @@ services:
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped
+    logging: *default-logging
     networks: [internal]
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')\""]
@@ -116,6 +127,7 @@ services:
       dockerfile: docker/app.Dockerfile
       target: runtime
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       db:
         condition: service_healthy
@@ -133,7 +145,7 @@ services:
       APP_PORT: ${APP_PORT:-8080}
       DB_HOST: db
     ports:
-      - "${APP_PORT:-8080}:8000"
+      - "${APP_BIND_ADDR:-0.0.0.0}:${APP_PORT:-8080}:8000"
     volumes:
       - app-media:/data/media
       - reports:/data/reports
@@ -155,6 +167,7 @@ services:
       dockerfile: docker/app.Dockerfile
       target: runtime
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       db:
         condition: service_healthy
@@ -187,6 +200,7 @@ services:
   n8n:
     image: n8nio/n8n:1.85.4
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       db:
         condition: service_healthy
@@ -205,8 +219,11 @@ services:
       APP_INTERNAL_API_TOKEN: ${APP_INTERNAL_API_TOKEN}
       APP_INTERNAL_URL: http://app:8000
       APP_N8N_WEBHOOK_TOKEN: ${APP_N8N_WEBHOOK_TOKEN:?Set APP_N8N_WEBHOOK_TOKEN in .env}
+    # La UI de n8n es administrativa: por defecto solo se publica en loopback.
+    # Para acceso LAN o vía reverse proxy, definí N8N_BIND_ADDR en .env
+    # (p.ej. N8N_BIND_ADDR=0.0.0.0) o publicala explícitamente en compose.override.yaml.
     ports:
-      - "5678:5678"
+      - "${N8N_BIND_ADDR:-127.0.0.1}:5678:5678"
     volumes:
       - n8n-data:/home/node/.n8n
     networks: [internal]
