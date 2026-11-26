@@ -9,6 +9,11 @@
     Las bandas con puntuación tienen prioridad sobre las reglas generales.
   </p>
   <p>
+    <form method="get" class="filters">
+      <input type="search" name="q" value="{{ query }}" placeholder="Buscar entidad, alias o examen">
+      <button type="submit" class="button">Buscar</button>
+      {% if query %}<a href="{% url 'catalog:equivalences' %}">Limpiar</a>{% endif %}
+    </form>
     {% if can_edit %}
       <a class="button" href="{% url 'catalog:entity_new' %}">Añadir entidad certificadora</a>
     {% endif %}
@@ -16,7 +21,7 @@
   </p>
 
   {% for entity in entities %}
-    <h2>{{ entity.name }}</h2>
+    <h2><a href="{% url 'catalog:entity_detail' entity.pk %}">{{ entity.name }}</a></h2>
     {% for exam in entity.exams.all %}
       {% if exam.is_active %}
       <h3>{{ exam.name }} <span class="muted">({{ exam.language.name|default:"sin idioma" }})</span></h3>

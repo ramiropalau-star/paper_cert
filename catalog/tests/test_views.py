@@ -151,3 +151,30 @@ def test_entity_create_validates_required_fields():
 
     assert response.status_code == 200
     assert not Entity.objects.filter(name="").exists()
+
+
+def test_equivalence_table_search_filters_entities():
+    client = Client()
+    client.force_login(make_user("viewer-search", ("viewer",)))
+    make_entity_with_exam()
+    Entity.objects.create(name="Other Board")
+
+    response = client.get(reverse("catalog:equivalences") + "?q=test")
+
+    assert response.status_code == 200
+    assert b"Test Board" in response.content
+    assert b"Other Board" not in response.content
+
+
+def test_equivalence_table_search_matches_alias():
+    client = Client()
+    client.force_login(make_user("viewer-search2", ("viewer",)))
+    entity, _exam = make_entity_with_exam()
+    from catalog.models import EntityAlias
+
+    EntityAlias.objects.create(entity=entity, alias="TB Alias")
+
+    response = client.get(reverse("catalog:equivalences") + "?q=tb%20alias")
+
+    assert response.status_code == 200
+    assert b"Test Board" in response.content

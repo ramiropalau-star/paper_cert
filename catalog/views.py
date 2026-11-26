@@ -62,6 +62,7 @@ def _parse_decimal(value: str) -> Decimal | None:
 @role_required(ROLE_VIEWER)
 @require_http_methods(["GET"])
 def equivalence_table(request):
+    query = (request.GET.get("q") or "").strip()
     entities = (
         Entity.objects.filter(is_active=True)
         .prefetch_related(
@@ -71,6 +72,13 @@ def equivalence_table(request):
         )
         .order_by("name")
     )
+    if query:
+        entities = entities.filter(
+            models.Q(name__icontains=query)
+            | models.Q(aliases__alias__icontains=query)
+            | models.Q(exams__name__icontains=query)
+            | models.Q(exams__aliases__alias__icontains=query)
+        ).distinct()
     return render(
         request,
         "catalog/equivalences.html",
@@ -78,6 +86,7 @@ def equivalence_table(request):
             "entities": entities,
             "levels": CefrLevel.choices,
             "can_edit": can_review_documents(request.user),
+            "query": query,
         },
     )
 
