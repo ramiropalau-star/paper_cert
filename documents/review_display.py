@@ -100,6 +100,10 @@ REVIEW_REASON_DETAILS = {
         "Equivalencia no encontrada",
         "No se encontró equivalencia UV L2 para el nivel declarado.",
     ),
+    "format_mismatch": (
+        "Formato no reconocido",
+        "El documento no coincide con el formato conocido del organismo emisor.",
+    ),
     "recovery_attempts_exhausted": (
         "Reintentos agotados",
         "El documento agotó los intentos automáticos de recuperación.",

@@ -148,6 +148,8 @@ class Certificate(models.Model):
     evidence = models.JSONField(default=dict, blank=True)
     field_confidence = models.JSONField(default=dict, blank=True)
     confidence = models.FloatField(null=True, blank=True)
+    format_score = models.FloatField(null=True, blank=True)
+    format_cohort = models.CharField(max_length=300, blank=True, default="")
     is_language_certificate = models.BooleanField(null=True, blank=True, default=None)
     multiple_certificates_suspected = models.BooleanField(default=False)
     review_status = models.CharField(
@@ -191,6 +193,7 @@ class ReviewEvent(models.Model):
         APPROVE = "approve", "Aprobación"
         REJECT = "reject", "Rechazo"
         REPROCESS = "reprocess", "Reproceso"
+        LEARN = "learn", "Aprendizaje"
 
     certificate = models.ForeignKey(Certificate, related_name="events", on_delete=models.CASCADE)
     event_type = models.CharField(max_length=20, choices=EventType.choices)

@@ -28,6 +28,7 @@ from catalog.models import (
 )
 from catalog.normalization import normalize_catalog_text
 from documents.models import Certificate, Document
+from documents.services.format_profile import score_document_format
 from documents.services.labels import (
     apply_manual_review_label,
     sync_classification_tags,
@@ -48,6 +49,7 @@ CLASSIFICATION_REASON_CODES = {
     "non_certificate",
     "manual_label_failed",
     "equivalence_not_found",
+    "format_mismatch",
 }
 
 SKIPPED_STATES = {
@@ -466,6 +468,31 @@ def equivalence_tooltip(certificate: Certificate, rules: list | None = None) -> 
     return "\n".join(lines)
 
 
+FORMAT_CONFIDENCE_WEIGHT = 0.3
+EXTRACTION_CONFIDENCE_KEY = "_extraction_confidence"
+
+
+def _blend_format_confidence(certificate: Certificate, format_score: float | None) -> None:
+    """Blend the format score into stored confidence, idempotently.
+
+    The raw extraction confidence is preserved under
+    ``field_confidence["_extraction_confidence"]`` so reprocessing does not
+    blend repeatedly.
+    """
+    field_confidence = dict(certificate.field_confidence or {})
+    raw = field_confidence.get(EXTRACTION_CONFIDENCE_KEY)
+    if raw is None and certificate.confidence is not None:
+        raw = certificate.confidence
+        field_confidence[EXTRACTION_CONFIDENCE_KEY] = raw
+    certificate.field_confidence = field_confidence
+    if format_score is None or raw is None:
+        return
+    blended = (1 - FORMAT_CONFIDENCE_WEIGHT) * float(raw) + (
+        FORMAT_CONFIDENCE_WEIGHT * format_score
+    )
+    certificate.confidence = round(blended, 4)
+
+
 def aggregate_reasons(certificate: Certificate) -> list[str]:
     """Compute review reasons from the classified certificate."""
     reasons: list[str] = []
@@ -490,6 +517,13 @@ def aggregate_reasons(certificate: Certificate) -> list[str]:
         missing.append("issue_date")
     if certificate.exam_id is not None and not certificate.equivalence:
         reasons.append("equivalence_not_found")
+    if (
+        certificate.entity_id is not None
+        and certificate.format_score is not None
+        and certificate.format_score
+        < float(settings.APP.get("format_score_threshold", 0.4))
+    ):
+        reasons.append("format_mismatch")
     if missing:
         reasons.append("missing_essential_fields")
     confidence = certificate.confidence
@@ -547,6 +581,10 @@ def classify_certificate(
         if "equivalence" not in manual:
             apply_equivalence(certificate)
         date_reasons = apply_dates(certificate)
+        format_score, cohort = score_document_format(certificate)
+        certificate.format_score = format_score
+        certificate.format_cohort = cohort or ""
+        _blend_format_confidence(certificate, format_score)
         reasons = aggregate_reasons(certificate) + date_reasons
         certificate.review_reasons = _merge_reasons(certificate.review_reasons, reasons)
         certificate.save()

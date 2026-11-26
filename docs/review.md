@@ -121,3 +121,35 @@ until it is approved. Validated records appear in the report's
 through Django (authenticated, viewer role or above) with the detected
 content type, so reviewers can inspect the document inside the review page
 without logging into Paperless. The detail page embeds it in an iframe.
+
+## Learning from review
+
+Approving or validating a certificate teaches the system (post-commit, never
+blocking the decision):
+
+- Printed literals that resolved to catalog entries are saved as aliases, so
+  the next document with the same wording classifies automatically.
+- A manually assigned entity/exam on an unknown literal creates the missing
+  `Exam` entry (entities are still created via the Django admin).
+- A manually corrected UV L2 equivalence creates an unbanded `Equivalence`
+  rule (`source="review"`) when none exists for that exam/level.
+- A manually corrected CEFR level creates an **inactive**
+  `CefrConversionRule` candidate pinned to the observed score; a human must
+  widen the band and activate it.
+- Conflicting aliases are never overwritten; they are recorded in the
+  learning outcome attached to the approve/validate `ReviewEvent`.
+
+`python manage.py learn_from_history [--dry-run]` replays the same learning
+over already-approved/validated certificates (idempotent).
+
+## Format profiles
+
+Each entity accumulates a textual format profile per issuance year, built
+from approved certificates' page text. Classification scores every document
+against the profile of its claimed entity/year cohort and blends the score
+into `certificate.confidence` (30% weight). A `format_mismatch` review
+reason is emitted when the score falls below `APP_FORMAT_SCORE_THRESHOLD`
+(default 0.4). Anchors require corroboration across at least two approved
+samples (`APP_FORMAT_MIN_SAMPLES`) or half the cohort, whichever is
+stricter, so single-document quirks never define a format. See
+`catalog.FormatProfile` and `documents/services/format_profile.py`.

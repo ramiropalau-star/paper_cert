@@ -86,6 +86,8 @@ Classification writes these codes to `certificate.review_reasons`:
 | `low_confidence` | overall confidence below `APP_CONFIDENCE_REVIEW_THRESHOLD` |
 | `multiple_certificates` | file appears to contain several certificates |
 | `non_certificate` | document is not a language certificate |
+| `equivalence_not_found` | exam resolved but no UV L2 equivalence rule applies |
+| `format_mismatch` | document text does not match the issuer's known format profile |
 
 ## `Otros` label
 

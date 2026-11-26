@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -9,10 +10,12 @@ from typing import Any
 from django.db import transaction
 
 from documents.models import Certificate, Document, ReviewEvent
+from documents.services.format_profile import learn_format_profile
 from documents.services.labels import (
     remove_manual_review_label,
     sync_classification_tags,
 )
+from documents.services.learning import learn_from_certificate
 from documents.services.n8n import notify_processing
 from documents.services.paperless import DocumentStore
 from documents.services.state import (
@@ -20,6 +23,8 @@ from documents.services.state import (
     transition_certificate,
     transition_document,
 )
+
+logger = logging.getLogger(__name__)
 
 EDITABLE_FIELDS = (
     "student_name",
@@ -175,6 +180,25 @@ def missing_required_fields(certificate: Certificate) -> list[str]:
     return missing
 
 
+def _run_learning(
+    certificate: Certificate, actor, event: ReviewEvent | None = None
+) -> dict[str, Any]:
+    """Run catalog + format learning after approval, never blocking it."""
+    try:
+        outcome = learn_from_certificate(certificate, actor)
+        learn_format_profile(certificate)
+        outcome["format_profile_updated"] = True
+    except Exception:
+        logger.exception("Catalog learning failed for certificate %s", certificate.pk)
+        outcome = {"error": "learning failed; see server logs"}
+    if event is not None:
+        after = dict(event.after or {})
+        after["learning"] = outcome
+        event.after = after
+        event.save(update_fields=["after"])
+    return outcome
+
+
 def approve_certificate(
     certificate: Certificate, actor, *, store: DocumentStore | None = None
 ) -> ReviewOutcome:
@@ -195,7 +219,7 @@ def approve_certificate(
             transition_certificate(certificate, Certificate.ReviewStatus.APPROVED)
             document = certificate.document
             transition_document(document, Document.ProcessingState.APPROVED)
-            ReviewEvent.objects.create(
+            event = ReviewEvent.objects.create(
                 certificate=certificate,
                 event_type=ReviewEvent.EventType.APPROVE,
                 actor=actor,
@@ -208,6 +232,7 @@ def approve_certificate(
     except StateTransitionError:
         return ReviewOutcome(ok=False, error="No se permite aprobar un certificado en este estado.")
     remove_manual_review_label(document, store=store)
+    _run_learning(certificate, actor, event=event)
     return ReviewOutcome(ok=True)
 
 
@@ -223,7 +248,7 @@ def validate_certificate(certificate: Certificate, actor) -> ReviewOutcome:
         with transaction.atomic():
             before = {"review_status": certificate.review_status}
             transition_certificate(certificate, Certificate.ReviewStatus.VALIDATED)
-            ReviewEvent.objects.create(
+            event = ReviewEvent.objects.create(
                 certificate=certificate,
                 event_type=ReviewEvent.EventType.VALIDATE,
                 actor=actor,
@@ -232,6 +257,7 @@ def validate_certificate(certificate: Certificate, actor) -> ReviewOutcome:
             )
     except StateTransitionError:
         return ReviewOutcome(ok=False, error="No se permite validar un certificado en este estado.")
+    _run_learning(certificate, actor, event=event)
     return ReviewOutcome(ok=True)
 
 

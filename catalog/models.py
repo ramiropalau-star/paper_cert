@@ -196,6 +196,45 @@ class CefrConversionRule(TimestampedModel):
         return f"{self.exam.name}: {self.score_min}-{self.score_max} -> {self.cefr_level}"
 
 
+class FormatProfile(TimestampedModel):
+    """Textual format signature learned from approved certificates.
+
+    Cohort key is (entity, year); ``exam`` is populated only when enough
+    approved samples share entity+exam+year (see APP_FORMAT_MIN_EXAM_SAMPLES).
+    ``anchors`` stores ``[{"text": normalized_anchor, "df": int}]`` ranked by
+    document frequency within the cohort.
+    """
+
+    entity = models.ForeignKey(
+        Entity, related_name="format_profiles", on_delete=models.CASCADE
+    )
+    exam = models.ForeignKey(
+        Exam,
+        related_name="format_profiles",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    year = models.PositiveIntegerField()
+    anchors = models.JSONField(default=list, blank=True)
+    sample_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["entity__name", "year"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["entity", "exam", "year"],
+                name="unique_format_profile_cohort",
+            )
+        ]
+
+    def __str__(self) -> str:
+        scope = f"{self.entity.name} {self.year}"
+        if self.exam_id:
+            scope += f" / {self.exam.name}"
+        return f"Format profile: {scope}"
+
+
 class Equivalence(TimestampedModel):
     """UV L2 accreditation equivalence for an exam (optionally score-banded)."""
 

@@ -191,6 +191,12 @@
                       No disponible
                     {% endif %}
                     {% if warnings.confidence %} <a class="warn" href="#f-confidence">⚠ {{ warnings.confidence }}</a>{% endif %}
+                    {% if certificate.format_score is not None %}
+                      <div class="format-score">
+                        Formato: <strong>{{ certificate.format_score|floatformat:2 }}</strong>
+                        {% if certificate.format_cohort %}<span class="muted">· {{ certificate.format_cohort }}</span>{% endif %}
+                      </div>
+                    {% endif %}
                   </td>
                 </tr>
                 <tr>
