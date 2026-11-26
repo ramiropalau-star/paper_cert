@@ -5,6 +5,13 @@ the originals in Paperless-ngx, extracts structured fields with a local
 Ollama model, classifies them against an editable catalog, routes uncertain
 records to human review, and produces Excel reports.
 
+The system learns from every approved or validated certificate: printed
+literals become catalog aliases, manual equivalence/CEFR corrections become
+rules, and each issuer accumulates a per-year format profile that scores
+future documents and can flag `format_mismatch` for review. See
+[Review → Learning from review](docs/review.md#learning-from-review) and
+`python manage.py learn_from_history` for backfilling from history.
+
 ## Stack
 
 Django 5 + PostgreSQL + Paperless-ngx (document store) + Ollama (extraction)
