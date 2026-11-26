@@ -274,6 +274,72 @@ def test_document_thumbnail_streams_from_paperless():
     store.download_thumbnail.assert_called_once_with("42")
 
 
+def test_document_thumbnail_serves_cache_hit_without_paperless():
+    from django.core.cache import cache
+
+    cache.clear()
+    viewer = make_user("viewer-thumb", ("viewer",))
+    client = Client()
+    client.force_login(viewer)
+    document = make_document(fingerprint="a1" * 32)
+
+    webp_bytes = b"RIFF\x00\x00\x00\x00WEBP"
+    with patch("documents.views.build_document_store") as build_store:
+        store = build_store.return_value
+        store.download_thumbnail.return_value = webp_bytes
+        first = client.get(reverse("documents:thumbnail", args=[document.pk]))
+        second = client.get(reverse("documents:thumbnail", args=[document.pk]))
+
+    assert first.status_code == second.status_code == 200
+    assert second.content == webp_bytes
+    store.download_thumbnail.assert_called_once_with("42")
+
+
+def test_document_thumbnail_refetches_on_version_change():
+    from datetime import timedelta
+
+    from django.core.cache import cache
+    from django.utils import timezone
+
+    cache.clear()
+    viewer = make_user("viewer-thumb2", ("viewer",))
+    client = Client()
+    client.force_login(viewer)
+    document = make_document(fingerprint="a2" * 32)
+
+    with patch("documents.views.build_document_store") as build_store:
+        store = build_store.return_value
+        store.download_thumbnail.return_value = b"RIFF\x00\x00\x00\x00WEBP"
+        client.get(reverse("documents:thumbnail", args=[document.pk]))
+        Document.objects.filter(pk=document.pk).update(
+            updated_at=timezone.now() + timedelta(days=1)
+        )
+        client.get(reverse("documents:thumbnail", args=[document.pk]))
+
+    assert store.download_thumbnail.call_count == 2
+
+
+def test_document_thumbnail_returns_placeholder_on_paperless_failure():
+    from django.core.cache import cache
+
+    from documents.services.paperless import PaperlessError
+
+    cache.clear()
+    viewer = make_user("viewer-thumb3", ("viewer",))
+    client = Client()
+    client.force_login(viewer)
+    document = make_document(fingerprint="a3" * 32)
+
+    with patch("documents.views.build_document_store") as build_store:
+        store = build_store.return_value
+        store.download_thumbnail.side_effect = PaperlessError("down")
+        response = client.get(reverse("documents:thumbnail", args=[document.pk]))
+
+    assert response.status_code == 200
+    assert response["Content-Type"] == "image/svg+xml"
+    assert b"<svg" in response.content
+
+
 def test_document_original_requires_login(client):
     document = make_document()
     response = client.get(reverse("documents:original", args=[document.pk]))
@@ -313,6 +379,10 @@ class TagStore(FakeStore):
 
     def document_tag_names(self, document_id):
         return list(self.tag_names)
+
+    def set_tags(self, document_id, names):
+        self.tag_names = set(names)
+        return True
 
     def add_tag(self, document_id, name):
         self.tag_names.add(name)

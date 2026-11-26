@@ -1,5 +1,5 @@
 import io
-from datetime import date
+from datetime import UTC, date
 
 import pytest
 import respx
@@ -379,7 +379,7 @@ def test_generate_report_includes_rejected_sheet(client, monkeypatch, tmp_path):
     monkeypatch.setitem(settings.APP, "report_output_dir", str(tmp_path))
     viewer = make_user("viewer", ("viewer",))
     client.force_login(viewer)
-    approved = make_certificate(make_document(1))
+    make_certificate(make_document(1))
     rejected = make_certificate(
         make_document(2),
         review_status=Certificate.ReviewStatus.REJECTED,
@@ -395,9 +395,7 @@ def test_generate_report_includes_rejected_sheet(client, monkeypatch, tmp_path):
 
     from reports.services import generate_report
 
-    job = ReportJob.objects.create(
-        filters={"include_pending": False}, requested_by=viewer
-    )
+    job = ReportJob.objects.create(filters={"include_pending": False}, requested_by=viewer)
     generate_report(job)
 
     assert job.status == ReportJob.Status.READY
@@ -405,3 +403,162 @@ def test_generate_report_includes_rejected_sheet(client, monkeypatch, tmp_path):
     assert "Rechazados" in workbook.sheetnames
     rows = _rows(workbook["Rechazados"])
     assert rows[1][17] == "No es un certificado de idioma"
+
+
+# --- reporting integrity ---
+
+
+def test_processing_date_uses_processed_at_in_local_timezone():
+    from datetime import datetime
+
+    from django.utils import timezone
+
+    document = make_document(
+        5,
+        processed_at=datetime(2024, 5, 13, 2, 30, tzinfo=UTC),
+    )
+    cert = make_certificate(document)
+
+    with timezone.override("America/New_York"):
+        content = build_workbook([cert], [])
+    workbook = load_workbook(io.BytesIO(content))
+    # 2024-05-13 02:30 UTC is 2024-05-12 22:30 in New York.
+    assert workbook["Certificados"]["L2"].value.date() == date(2024, 5, 12)
+
+    content = build_workbook([cert], [])
+    workbook = load_workbook(io.BytesIO(content))
+    assert workbook["Certificados"]["L2"].value.date() == date(2024, 5, 13)
+
+
+def test_processing_date_survives_later_document_edits():
+    from datetime import datetime
+
+    document = make_document(
+        6,
+        processed_at=datetime(2024, 5, 10, 12, 0, tzinfo=UTC),
+    )
+    cert = make_certificate(document)
+    Document.objects.filter(pk=document.pk).update(
+        updated_at=datetime(2025, 1, 1, 0, 0, tzinfo=UTC)
+    )
+
+    content = build_workbook([cert], [])
+    workbook = load_workbook(io.BytesIO(content))
+    assert workbook["Certificados"]["L2"].value.date() == date(2024, 5, 10)
+
+
+def test_processing_date_falls_back_to_updated_at_for_legacy_rows():
+    document = make_document(7)
+    assert document.processed_at is None
+    cert = make_certificate(document)
+
+    content = build_workbook([cert], [])
+    workbook = load_workbook(io.BytesIO(content))
+    cell = workbook["Certificados"]["L2"].value
+    assert cell.date() == document.updated_at.date()
+
+
+def test_generate_report_persists_counts_matching_sheets(client, monkeypatch, tmp_path):
+    monkeypatch.setitem(settings.APP, "report_output_dir", str(tmp_path))
+    viewer = make_user("viewer-counts", ("viewer",))
+    client.force_login(viewer)
+    make_certificate(make_document(1))
+    make_certificate(
+        make_document(2),
+        review_status=Certificate.ReviewStatus.PENDING,
+        student_name="Pending One",
+    )
+    make_certificate(
+        make_document(3),
+        review_status=Certificate.ReviewStatus.VALIDATED,
+        student_name="Validated One",
+    )
+    make_certificate(
+        make_document(4),
+        review_status=Certificate.ReviewStatus.REJECTED,
+        student_name="Rejected One",
+    )
+
+    from reports.services import generate_report
+
+    job = ReportJob.objects.create(filters={"include_pending": True}, requested_by=viewer)
+    generate_report(job)
+
+    assert job.status == ReportJob.Status.READY
+    assert job.counts == {"approved": 1, "pending": 2, "rejected": 1, "total": 4}
+
+    workbook = load_workbook(job.artifact_path)
+    assert len(_rows(workbook["Certificados"])) - 1 == job.counts["approved"]
+    assert len(_rows(workbook["Pendientes de revisión"])) - 1 == job.counts["pending"]
+    assert len(_rows(workbook["Rechazados"])) - 1 == job.counts["rejected"]
+
+
+def test_report_detail_shows_counts_unavailable_for_legacy_job(client):
+    viewer = make_user("viewer-legacy", ("viewer",))
+    client.force_login(viewer)
+    job = ReportJob.objects.create(
+        filters={}, status=ReportJob.Status.READY, artifact_path="/tmp/old.xlsx"
+    )
+
+    response = client.get(reverse("reports:detail", args=[job.pk]))
+
+    assert response.status_code == 200
+    assert b"No disponible" in response.content
+
+
+def test_report_creation_rejects_invalid_date_filter(client):
+    viewer = make_user("viewer-filter", ("viewer",))
+    client.force_login(viewer)
+
+    response = client.post(reverse("reports:list"), {"issue_date": "not-a-date"})
+
+    assert response.status_code == 302
+    assert ReportJob.objects.count() == 0
+
+
+def test_report_creation_rejects_ambiguous_date_filter(client):
+    viewer = make_user("viewer-ambig", ("viewer",))
+    client.force_login(viewer)
+
+    response = client.post(reverse("reports:list"), {"issue_date_from": "05/06/2024"})
+
+    assert response.status_code == 302
+    assert ReportJob.objects.count() == 0
+
+
+def test_generate_report_marks_error_on_invalid_filters(monkeypatch, tmp_path):
+    monkeypatch.setitem(settings.APP, "report_output_dir", str(tmp_path))
+    from reports.services import generate_report
+
+    job = ReportJob.objects.create(filters={"issue_date_to": "bogus"})
+    generate_report(job)
+
+    assert job.status == ReportJob.Status.ERROR
+    assert "issue_date_to" in job.error_reason
+
+
+def test_ready_job_artifact_is_immutable(client, monkeypatch, tmp_path):
+    monkeypatch.setitem(settings.APP, "report_output_dir", str(tmp_path))
+    from reports.services import generate_report, run_report_job
+
+    viewer = make_user("viewer-snap", ("viewer",))
+    cert = make_certificate(make_document(1))
+    job = ReportJob.objects.create(filters={}, requested_by=viewer)
+    generate_report(job)
+    first_path = job.artifact_path
+    first_bytes = open(first_path, "rb").read()
+
+    cert.student_name = "Changed Name"
+    cert.save()
+
+    again = run_report_job(job.pk)
+    assert again.status == ReportJob.Status.READY
+    assert again.artifact_path == first_path
+    assert open(first_path, "rb").read() == first_bytes
+
+    job2 = ReportJob.objects.create(filters={}, requested_by=viewer)
+    generate_report(job2)
+    assert job2.artifact_path != first_path
+    assert open(first_path, "rb").read() == first_bytes
+    workbook = load_workbook(job2.artifact_path)
+    assert "Changed Name" in [row[0] for row in _rows(workbook["Certificados"])[1:]]

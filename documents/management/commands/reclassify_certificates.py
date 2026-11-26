@@ -7,7 +7,7 @@ Manual field freezes (``manual_fields``) are respected by the services.
 
 from django.core.management.base import BaseCommand
 
-from documents.models import Certificate, Document
+from documents.models import Document
 from documents.services.classification import classify_certificate
 from documents.services.extraction import extract_certificate
 

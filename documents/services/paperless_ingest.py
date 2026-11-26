@@ -11,34 +11,20 @@ from __future__ import annotations
 import mimetypes
 from dataclasses import dataclass
 
-import magic
 from django.db import transaction
 
 from documents.models import Document
+from documents.services.filetype import effective_name, sniffed_type
 from documents.services.intake import fingerprint_bytes
 from documents.services.n8n import notify_processing
 from documents.services.paperless import DocumentStore, PaperlessError, build_document_store
 from documents.services.validation import (
     EXTENSION_BY_TYPE as _EXTENSION_BY_MIME,
+)
+from documents.services.validation import (
     IntakeValidationError,
     validate_upload,
 )
-
-
-def _sniffed_type(data: bytes) -> str:
-    try:
-        return magic.from_buffer(data[:4096], mime=True) or ""
-    except Exception:
-        return ""
-
-
-def _effective_name(filename: str, content_type: str) -> str:
-    from pathlib import Path
-
-    extension = _EXTENSION_BY_MIME.get(content_type)
-    if extension is None:
-        return filename
-    return f"{Path(filename or 'document').stem}{extension}"
 
 
 @dataclass(frozen=True)
@@ -85,10 +71,10 @@ def ingest_paperless_document(
             return PaperlessIngestResult(None, error=str(exc), error_code="paperless_error")
 
         # Paperless archives image originals as PDF; trust the bytes, not the name.
-        sniffed = _sniffed_type(data)
+        sniffed = sniffed_type(data)
         if sniffed and sniffed != declared_type:
             declared_type = sniffed
-            filename = _effective_name(filename, sniffed)
+            filename = effective_name(filename, sniffed, _EXTENSION_BY_MIME)
 
         try:
             validated = validate_upload(data, filename, declared_type)

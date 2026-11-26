@@ -487,6 +487,56 @@ def test_combined_filters_language_entity_level_issue_date():
     assert [d.original_filename for d in response.context["page"].object_list] == ["ada.pdf"]
 
 
+def test_non_numeric_language_filter_matches_literal():
+    viewer = make_user("viewer", ("viewer",))
+    client = Client()
+    client.force_login(viewer)
+    _seed_review_documents()
+
+    response = client.get(reverse("documents:list"), {"language": "eng"})
+
+    assert response.status_code == 200
+    filenames = {d.original_filename for d in response.context["page"].object_list}
+    assert filenames == {"ada.pdf", "grace.pdf"}
+
+
+def test_non_numeric_entity_filter_matches_literal():
+    viewer = make_user("viewer", ("viewer",))
+    client = Client()
+    client.force_login(viewer)
+    _seed_review_documents()
+
+    response = client.get(reverse("documents:list"), {"entity": "cambridge"})
+
+    assert response.status_code == 200
+    assert [d.original_filename for d in response.context["page"].object_list] == ["ada.pdf"]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"language": "abc"},
+        {"entity": "abc"},
+        {"state": "bogus"},
+        {"q": "%%"},
+        {"organism": "!!!"},
+        {"level": "??"},
+        {"issue_date": "not-a-date"},
+        {"issue_date": "2024-13-99"},
+        {"page": "abc"},
+    ],
+)
+def test_invalid_filters_return_200(params):
+    viewer = make_user("viewer", ("viewer",))
+    client = Client()
+    client.force_login(viewer)
+    _seed_review_documents()
+
+    response = client.get(reverse("documents:list"), params)
+
+    assert response.status_code == 200
+
+
 # --- 9.7 history ---
 
 
@@ -522,3 +572,117 @@ def test_history_renders_events_chronologically():
     assert "Edición" in content
     assert "Aprobación" in content
     assert "reviewer" in content
+
+
+# --- review UX clarity ---
+
+
+def _reviewer_client():
+    reviewer = make_user("reviewer-ux", ("reviewer",))
+    client = Client()
+    client.force_login(reviewer)
+    return client
+
+
+def test_detail_shows_reason_labels_not_raw_codes():
+    client = _reviewer_client()
+    document = make_document()
+    make_certificate(
+        document,
+        review_reasons=["unknown_language", "brand_new_future_code"],
+    )
+
+    response = client.get(reverse("documents:detail", args=[document.pk]))
+
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert "Idioma no identificado" in content
+    assert "Revisión adicional" in content
+    assert "Ver código" in content
+    # Known codes never appear; the unknown code only inside <details>.
+    assert ">unknown_language<" not in content
+    assert "brand_new_future_code" in content
+
+
+def test_detail_shows_no_observations_when_no_reasons():
+    client = _reviewer_client()
+    document = make_document()
+    make_certificate(document, review_reasons=[])
+
+    response = client.get(reverse("documents:detail", args=[document.pk]))
+
+    assert "Sin observaciones" in response.content.decode()
+
+
+def test_detail_confidence_percentage_and_band():
+    client = _reviewer_client()
+    document = make_document()
+    make_certificate(document, confidence=0.92, review_reasons=[])
+
+    response = client.get(reverse("documents:detail", args=[document.pk]))
+
+    content = response.content.decode()
+    assert "92%" in content
+    assert "Alta" in content
+    assert "0.92" in content
+
+
+def test_detail_confidence_missing_shows_unavailable():
+    client = _reviewer_client()
+    document = make_document()
+    make_certificate(document, confidence=None, review_reasons=[])
+
+    response = client.get(reverse("documents:detail", args=[document.pk]))
+
+    content = response.content.decode()
+    assert "No disponible" in content
+    assert "confidence-value" not in content
+
+
+def test_reprocess_requires_confirmation():
+    client = _reviewer_client()
+    document = make_document()
+    make_certificate(document)
+
+    response = client.post(reverse("documents:reprocess", args=[document.pk]))
+
+    assert response.status_code == 302
+    document.refresh_from_db()
+    assert document.processing_state == Document.ProcessingState.PENDING_REVIEW
+    messages = [str(m) for m in response.wsgi_request._messages]
+    assert any("Confirmá el reprocesamiento" in m for m in messages)
+
+
+def test_reprocess_with_confirmation_calls_service(monkeypatch):
+    client = _reviewer_client()
+    document = make_document()
+    make_certificate(document)
+    calls = []
+
+    import documents.views as views_module
+
+    def fake_reprocess(doc, user):
+        calls.append(doc.pk)
+        return type("Outcome", (), {"ok": True, "error": ""})()
+
+    monkeypatch.setattr(views_module, "reprocess_document", fake_reprocess)
+
+    response = client.post(
+        reverse("documents:reprocess", args=[document.pk]),
+        {"confirm_reprocess": "on"},
+    )
+
+    assert response.status_code == 302
+    assert calls == [document.pk]
+
+
+def test_reprocess_forms_include_confirmation_checkbox():
+    client = _reviewer_client()
+    document = make_document()
+    make_certificate(document)
+
+    response = client.get(reverse("documents:detail", args=[document.pk]))
+
+    content = response.content.decode()
+    assert content.count('name="confirm_reprocess"') == 1
+    assert "Confirmo que quiero reprocesar" in content

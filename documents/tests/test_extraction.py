@@ -40,6 +40,13 @@ def make_document(**overrides) -> Document:
     return Document.objects.create(**data)
 
 
+PAGE_TEXT = (
+    "student: Ada Lovelace\n"
+    "issued 12 May 2024\n"
+    "Cambridge English B2 First CERT-123 English quote text"
+)
+
+
 def add_page(document: Document, number: int = 1, text: str = "page text") -> None:
     DocumentPage.objects.create(
         document=document,
@@ -295,7 +302,7 @@ def test_parse_payload_rejects_missing_required_field():
 
 def test_successful_extraction_persists_certificate():
     document = make_document()
-    add_page(document, 1, "certificate text")
+    add_page(document, 1, PAGE_TEXT)
     llm = FakeLlm([json.dumps(payload_dict())])
     store = FakeStore()
 
@@ -323,7 +330,7 @@ def test_successful_extraction_persists_certificate():
 
 def test_extraction_is_idempotent_for_extracted_state():
     document = make_document(processing_state=Document.ProcessingState.EXTRACTED)
-    add_page(document, 1, "text")
+    add_page(document, 1, PAGE_TEXT)
     llm = FakeLlm([])
 
     result = extract_certificate(document, llm=llm)
@@ -335,7 +342,7 @@ def test_extraction_is_idempotent_for_extracted_state():
 
 def test_invalid_json_retried_then_succeeds():
     document = make_document()
-    add_page(document, 1, "text")
+    add_page(document, 1, PAGE_TEXT)
     llm = FakeLlm(["not json", json.dumps(payload_dict())])
 
     result = extract_certificate(document, llm=llm, store=FakeStore())
@@ -347,7 +354,7 @@ def test_invalid_json_retried_then_succeeds():
 
 def test_schema_mismatch_retried_then_succeeds():
     document = make_document()
-    add_page(document, 1, "text")
+    add_page(document, 1, PAGE_TEXT)
     bad = payload_dict()
     del bad["exam"]
     llm = FakeLlm([json.dumps(bad), json.dumps(payload_dict())])
@@ -360,7 +367,7 @@ def test_schema_mismatch_retried_then_succeeds():
 
 def test_retries_exhausted_routes_to_review():
     document = make_document()
-    add_page(document, 1, "text")
+    add_page(document, 1, PAGE_TEXT)
     llm = FakeLlm(["garbage"] * 3)
     store = FakeStore()
 
@@ -376,7 +383,7 @@ def test_retries_exhausted_routes_to_review():
 
 def test_model_unavailable_sets_error_state():
     document = make_document()
-    add_page(document, 1, "text")
+    add_page(document, 1, PAGE_TEXT)
     llm = FakeLlm([OllamaError("Ollama returned HTTP 503", code="service_unavailable")])
     store = FakeStore()
 
@@ -405,7 +412,7 @@ def test_input_size_cap_routes_to_review_without_calling_model():
 
 def test_non_certificate_is_flagged_and_sent_to_review():
     document = make_document()
-    add_page(document, 1, "invoice text")
+    add_page(document, 1, PAGE_TEXT)
     payload = payload_dict(is_language_certificate=False)
     llm = FakeLlm([json.dumps(payload)])
     store = FakeStore()
@@ -422,7 +429,7 @@ def test_non_certificate_is_flagged_and_sent_to_review():
 
 def test_multiple_certificates_flagged_without_silent_merge():
     document = make_document()
-    add_page(document, 1, "two certificates")
+    add_page(document, 1, PAGE_TEXT)
     payload = payload_dict(multiple_certificates_suspected=True)
     llm = FakeLlm([json.dumps(payload)])
 
@@ -468,7 +475,7 @@ def _patch_llm(monkeypatch, llm):
 
 def test_internal_extract_endpoint_is_idempotent(monkeypatch):
     document = make_document()
-    add_page(document, 1, "text")
+    add_page(document, 1, PAGE_TEXT)
     llm = FakeLlm([json.dumps(payload_dict())])
     _patch_llm(monkeypatch, llm)
     client = Client()
@@ -506,7 +513,7 @@ def test_internal_extract_endpoint_refuses_invalid_state(monkeypatch):
 
 def test_reextraction_preserves_manually_edited_literals():
     document = make_document(processing_state=Document.ProcessingState.TEXT_READY)
-    add_page(document, 1, "certificate text")
+    add_page(document, 1, PAGE_TEXT)
     certificate = Certificate.objects.create(
         document=document,
         language_literal="Français",
@@ -520,3 +527,66 @@ def test_reextraction_preserves_manually_edited_literals():
     certificate.refresh_from_db()
     assert certificate.language_literal == "Français"
     assert certificate.entity_literal == "Cambridge English"
+
+
+# --- Extraction repair feedback (pipeline-reliability) ---
+
+
+def test_invalid_output_is_repaired_with_feedback():
+    document = make_document()
+    add_page(document, 1, PAGE_TEXT)
+    llm = FakeLlm(["not json", json.dumps(payload_dict())])
+
+    result = extract_certificate(document, llm=llm, store=FakeStore())
+
+    assert result.state == Document.ProcessingState.EXTRACTED
+    second_call_messages = llm.calls[1]["messages"]
+    assert second_call_messages[-2]["role"] == "assistant"
+    assert second_call_messages[-2]["content"] == "not json"
+    repair = second_call_messages[-1]["content"]
+    assert "failed validation" in repair
+
+
+def test_out_of_range_confidence_is_rejected_and_repaired():
+    document = make_document()
+    add_page(document, 1, PAGE_TEXT)
+    bad = payload_dict()
+    bad["confidence"] = 1.5
+    llm = FakeLlm([json.dumps(bad), json.dumps(payload_dict())])
+
+    result = extract_certificate(document, llm=llm, store=FakeStore())
+
+    assert result.state == Document.ProcessingState.EXTRACTED
+    assert len(llm.calls) == 2
+    repair = llm.calls[1]["messages"][-1]["content"]
+    assert "confidence" in repair
+
+
+def test_unsupported_evidence_quote_is_rejected_and_repaired():
+    document = make_document()
+    add_page(document, 1, PAGE_TEXT)
+    bad = payload_dict()
+    bad["student_name"] = field("Ada Lovelace", quote="not on this page")
+    llm = FakeLlm([json.dumps(bad), json.dumps(payload_dict())])
+
+    result = extract_certificate(document, llm=llm, store=FakeStore())
+
+    assert result.state == Document.ProcessingState.EXTRACTED
+    assert len(llm.calls) == 2
+    repair = llm.calls[1]["messages"][-1]["content"]
+    assert "evidence" in repair
+
+
+def test_repair_exhaustion_routes_to_review_with_invalid_extraction():
+    document = make_document()
+    add_page(document, 1, PAGE_TEXT)
+    bad = payload_dict()
+    bad["student_name"] = field("Ada Lovelace", quote="fabricated quote")
+    llm = FakeLlm([json.dumps(bad)] * 3)
+
+    result = extract_certificate(document, llm=llm, store=FakeStore())
+
+    assert result.state == Document.ProcessingState.PENDING_REVIEW
+    document.refresh_from_db()
+    assert "invalid_extraction" in document.review_reasons
+    assert Certificate.objects.filter(document=document).count() == 0

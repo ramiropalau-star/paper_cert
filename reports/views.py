@@ -14,7 +14,11 @@ from catalog.models import Entity, Language
 from core.internal import internal_token_required
 from core.permissions import ROLE_VIEWER, role_required
 from reports.models import ReportJob
-from reports.services import create_report_job, run_report_job
+from reports.services import (
+    ReportFilterError,
+    create_report_job,
+    run_report_job,
+)
 
 FILTER_KEYS = (
     "student",
@@ -44,7 +48,11 @@ def _collect_filters(request) -> dict:
 @require_http_methods(["GET", "POST"])
 def report_list(request):
     if request.method == "POST":
-        job = create_report_job(_collect_filters(request), request.user)
+        try:
+            job = create_report_job(_collect_filters(request), request.user)
+        except ReportFilterError as exc:
+            messages.error(request, str(exc))
+            return redirect("reports:list")
         messages.success(request, f"Reporte #{job.pk} en cola.")
         return redirect("reports:detail", pk=job.pk)
 

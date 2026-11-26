@@ -7,6 +7,14 @@
 <p>Solicitado por: {{ job.requested_by.username|default:"—" }}</p>
 <p>Creado: {{ job.created_at|date:"Y-m-d H:i" }} · Completado: {{ job.completed_at|date:"Y-m-d H:i"|default:"—" }}</p>
 <p>Filtros: <code>{{ job.filters }}</code></p>
+{% if job.counts %}
+<p>Registros: {{ job.counts.approved|default:0 }} aprobados,
+{{ job.counts.pending|default:0 }} pendientes,
+{{ job.counts.rejected|default:0 }} rechazados
+({{ job.counts.total|default:0 }} en total)</p>
+{% else %}
+<p>Registros: No disponible</p>
+{% endif %}
 {% if job.status == 'ready' %}
 <p><a class="button" href="{% url 'reports:download' job.pk %}">Descargar .xlsx</a></p>
 {% endif %}

@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date
 from decimal import Decimal
 
 import pytest
@@ -407,9 +407,7 @@ def test_month_year_candidate_is_not_fabricated():
     certificate = make_certificate(
         document,
         date_texts={
-            "candidates": [
-                {"text": "SEPTEMBER 2020", "role": "exam", "page": 1, "quote": ""}
-            ]
+            "candidates": [{"text": "SEPTEMBER 2020", "role": "exam", "page": 1, "quote": ""}]
         },
     )
 
@@ -427,9 +425,7 @@ def test_non_date_candidate_is_ignored():
     certificate = make_certificate(
         document,
         date_texts={
-            "candidates": [
-                {"text": "Firma-4751635", "role": "issue", "page": 1, "quote": ""}
-            ]
+            "candidates": [{"text": "Firma-4751635", "role": "issue", "page": 1, "quote": ""}]
         },
     )
 
@@ -551,3 +547,97 @@ def test_internal_classify_requires_token_and_valid_state():
         HTTP_X_INTERNAL_TOKEN="test-internal-token",
     )
     assert refused.status_code == 409
+
+
+# --- processed_at stamping ---
+
+
+def _reviewer(username: str):
+    from django.contrib.auth.models import Group, User
+
+    user = User.objects.create_user(username, password="password")
+    group, _ = Group.objects.get_or_create(name="reviewer")
+    user.groups.add(group)
+    return user
+
+
+def test_processed_at_stamped_when_classification_reaches_review():
+    document = make_document()
+    make_certificate(document)
+    assert document.processed_at is None
+
+    classify_certificate(document, store=FakeStore())
+
+    document.refresh_from_db()
+    assert document.processing_state == Document.ProcessingState.PENDING_REVIEW.value
+    assert document.processed_at is not None
+
+
+def test_processed_at_unchanged_on_approve_and_edit():
+    from documents.services.review import apply_manual_edit, approve_certificate
+
+    reviewer = _reviewer("proc-at")
+    document = make_document()
+    certificate = make_certificate(document)
+    classify_certificate(document, store=FakeStore())
+    document.refresh_from_db()
+    stamped = document.processed_at
+
+    approve_certificate(certificate, reviewer)
+    document.refresh_from_db()
+    assert document.processed_at == stamped
+
+    apply_manual_edit(
+        certificate,
+        {"student_name": "New Name"},
+        reviewer,
+    )
+    document.refresh_from_db()
+    assert document.processed_at == stamped
+
+
+def test_processed_at_restamped_after_reprocess_and_reclassify():
+    from datetime import datetime
+
+    from documents.services.review import reprocess_document
+    from documents.services.state import transition_document
+
+    reviewer = _reviewer("proc-re")
+    document = make_document()
+    make_certificate(document)
+    classify_certificate(document, store=FakeStore())
+    document.refresh_from_db()
+    first_stamp = document.processed_at
+
+    # Simulate the passage of time, then reprocess and re-run the pipeline.
+    past = datetime(2020, 1, 1, tzinfo=UTC)
+    Document.objects.filter(pk=document.pk).update(processed_at=past)
+
+    outcome = reprocess_document(document, reviewer)
+    assert outcome.ok
+    document.refresh_from_db()
+    assert document.processing_state == Document.ProcessingState.STORED.value
+
+    transition_document(document, Document.ProcessingState.TEXT_READY.value)
+    transition_document(document, Document.ProcessingState.EXTRACTED.value)
+    classify_certificate(document, store=FakeStore())
+    document.refresh_from_db()
+
+    assert document.processed_at is not None
+    assert document.processed_at > past
+    assert document.processed_at != first_stamp or document.processed_at > past
+
+
+def test_processed_at_backfill_migration_uses_updated_at():
+    import importlib
+
+    from django.apps import apps
+
+    document = make_document()
+    assert document.processed_at is None
+
+    migration = importlib.import_module("documents.migrations.0007_document_processed_at")
+    migration.backfill_processed_at(apps, None)
+
+    document.refresh_from_db()
+    assert document.processed_at == document.updated_at

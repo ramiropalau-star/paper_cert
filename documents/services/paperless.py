@@ -46,6 +46,8 @@ class DocumentStore:
         self.poll_timeout = float(
             app["paperless_poll_timeout_seconds"] if poll_timeout is None else poll_timeout
         )
+        self.retries = int(app.get("paperless_retries") or 0)
+        self.retry_backoff = float(app.get("paperless_retry_backoff_seconds") or 0.5)
         self._owns_client = client is None
         self._client = client or httpx.Client(
             base_url=self.base_url,
@@ -57,7 +59,10 @@ class DocumentStore:
         if self._owns_client:
             self._client.close()
 
-    def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
+    _IDEMPOTENT_METHODS = {"GET", "PATCH", "DELETE"}
+    _MAX_BACKOFF_SECONDS = 8.0
+
+    def _request_once(self, method: str, url: str, **kwargs) -> httpx.Response:
         try:
             response = self._client.request(method, url, **kwargs)
         except httpx.TimeoutException as exc:
@@ -78,6 +83,26 @@ class DocumentStore:
                 status_code=response.status_code,
             )
         return response
+
+    def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        """Issue a request, retrying transient failures on idempotent methods.
+
+        ``POST`` is never retried: Paperless has no idempotency key for
+        ``post_document``, so a retry after a lost response could create a
+        duplicate document.
+        """
+        attempts = self.retries + 1 if method.upper() in self._IDEMPOTENT_METHODS else 1
+        last_error: PaperlessError | None = None
+        for attempt in range(attempts):
+            try:
+                return self._request_once(method, url, **kwargs)
+            except PaperlessError as exc:
+                last_error = exc
+                if not exc.retryable or attempt == attempts - 1:
+                    raise
+                delay = min(self.retry_backoff * (2**attempt), self._MAX_BACKOFF_SECONDS)
+                time.sleep(delay)
+        raise last_error  # pragma: no cover - loop always returns or raises
 
     def _json(self, response: httpx.Response) -> Any:
         try:
@@ -154,11 +179,17 @@ class DocumentStore:
             raise PaperlessError("Paperless returned invalid document metadata")
         return payload
 
-    def list_documents(self) -> list[dict[str, Any]]:
-        """Return metadata for every document in Paperless (paginated)."""
+    def list_documents(self, *, since: Any = None) -> list[dict[str, Any]]:
+        """Return metadata for Paperless documents (paginated).
+
+        When ``since`` is a datetime, only documents added at or after it are
+        requested via the ``added__gte`` filter.
+        """
         results: list[dict[str, Any]] = []
         url = "/api/documents/"
         params: dict[str, Any] | None = {"page_size": 100}
+        if since is not None:
+            params["added__gte"] = since.isoformat()
         while url:
             response = self._request("GET", url, params=params)
             payload = self._json(response)
@@ -211,14 +242,70 @@ class DocumentStore:
         )
         return True
 
+    def _load_tag_catalog(self) -> dict[str, int]:
+        catalog: dict[str, int] = {}
+        url = "/api/tags/"
+        params: dict[str, Any] | None = {"page_size": 100}
+        while url:
+            response = self._request("GET", url, params=params)
+            payload = self._json(response)
+            if isinstance(payload, dict):
+                for tag in payload.get("results", []):
+                    if isinstance(tag, dict) and tag.get("name") and tag.get("id") is not None:
+                        catalog[str(tag["name"])] = int(tag["id"])
+                url = payload.get("next") or ""
+                params = None
+            else:
+                for tag in payload or []:
+                    if isinstance(tag, dict) and tag.get("name") and tag.get("id") is not None:
+                        catalog[str(tag["name"])] = int(tag["id"])
+                break
+        return catalog
+
+    def tag_catalog(self) -> dict[str, int]:
+        """Return the name -> id map for every Paperless tag, fetched once."""
+        if not hasattr(self, "_tag_catalog"):
+            self._tag_catalog = self._load_tag_catalog()
+        return self._tag_catalog
+
+    def ensure_tags(self, names: Any) -> None:
+        """Create any missing tags and keep the catalog up to date."""
+        catalog = self.tag_catalog()
+        for name in names:
+            if name in catalog:
+                continue
+            response = self._request("POST", "/api/tags/", json={"name": name})
+            payload = self._json(response)
+            if not isinstance(payload, dict) or "id" not in payload:
+                raise PaperlessError("Paperless did not return the created tag id")
+            catalog[name] = int(payload["id"])
+
+    def set_tags(self, document_id: str, names: Any) -> bool:
+        """Replace the document's tag set with ``names`` using one PATCH.
+
+        Returns True when the document was modified. Callers compute the final
+        desired set (including tags they do not manage).
+        """
+        wanted_names = sorted({str(name) for name in names})
+        self.ensure_tags(wanted_names)
+        catalog = self.tag_catalog()
+        wanted_ids = sorted({catalog[name] for name in wanted_names})
+        current = self._document_tag_ids(document_id)
+        if sorted(current) == wanted_ids:
+            return False
+        self._request(
+            "PATCH",
+            f"/api/documents/{document_id}/",
+            json={"tags": wanted_ids},
+        )
+        return True
+
     def document_tag_names(self, document_id: str) -> list[str]:
         tag_ids = set(self._document_tag_ids(document_id))
         if not tag_ids:
             return []
-        response = self._request("GET", "/api/tags/")
-        payload = self._json(response)
-        results = payload.get("results", []) if isinstance(payload, dict) else payload
-        return [tag["name"] for tag in results or [] if int(tag.get("id", -1)) in tag_ids]
+        id_to_name = {tag_id: name for name, tag_id in self.tag_catalog().items()}
+        return [id_to_name[tag_id] for tag_id in tag_ids if tag_id in id_to_name]
 
     def remove_tag(self, document_id: str, name: str) -> bool:
         tag_id = self._find_tag(name)

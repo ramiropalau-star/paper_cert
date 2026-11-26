@@ -62,15 +62,10 @@ def test_document_page_number_is_unique_per_document():
 
 
 def test_document_npa_parsed_from_filename():
-    document = make_document(
-        original_filename="2027ERASMUSWF29402_I.Certificado_Idioma_E.pdf"
-    )
+    document = make_document(original_filename="2027ERASMUSWF29402_I.Certificado_Idioma_E.pdf")
     assert document.npa == "WF29402"
 
-    assert (
-        make_document(fingerprint="b" * 64, original_filename="certificate.pdf").npa
-        == ""
-    )
+    assert make_document(fingerprint="b" * 64, original_filename="certificate.pdf").npa == ""
     assert (
         make_document(
             fingerprint="c" * 64,

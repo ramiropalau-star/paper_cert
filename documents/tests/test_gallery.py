@@ -7,7 +7,7 @@ from django.test import Client
 from django.urls import reverse
 
 from catalog.models import Entity, Equivalence, Exam, Language
-from documents.models import Certificate, Document, DocumentPage, ReviewEvent
+from documents.models import Certificate, Document
 
 pytestmark = pytest.mark.django_db
 
@@ -91,7 +91,7 @@ def test_gallery_renders_certificate_cards():
     assert "Equiv. UV:" in content
     assert ">B2</a>" in content or ">B2<" in content
     assert 'name="documents"' in content
-    assert 'value="%d"' % document.pk in content
+    assert f'value="{document.pk}"' in content
     assert content.count("gallery-card") == 1
 
 
@@ -105,7 +105,7 @@ def test_gallery_uses_thumbnail_endpoint_for_cards():
     response = client.get(reverse("documents:gallery"))
 
     content = response.content.decode()
-    assert f'/documents/{document.pk}/thumbnail/' in content
+    assert f"/documents/{document.pk}/thumbnail/" in content
     assert "<img" in content
 
 
@@ -151,12 +151,18 @@ def test_gallery_filters_by_language_entity_organism():
 
     d1 = make_document(1)
     make_certificate(
-        d1, student_name="Ada", language=eng, entity=cambridge,
+        d1,
+        student_name="Ada",
+        language=eng,
+        entity=cambridge,
         issuing_body_literal="University of Cambridge",
     )
     d2 = make_document(2)
     make_certificate(
-        d2, student_name="Grace", language=spa, entity=ielts,
+        d2,
+        student_name="Grace",
+        language=spa,
+        entity=ielts,
         issuing_body_literal="British Council",
     )
 
@@ -164,14 +170,10 @@ def test_gallery_filters_by_language_entity_organism():
         reverse("documents:gallery"),
         {"language": str(eng.pk), "entity": str(cambridge.pk), "organism": "Cambridge"},
     )
-    assert [d.original_filename for d in response.context["page"].object_list] == [
-        "cert-1.pdf"
-    ]
+    assert [d.original_filename for d in response.context["page"].object_list] == ["cert-1.pdf"]
 
     response = client.get(reverse("documents:gallery"), {"organism": "Council"})
-    assert [d.original_filename for d in response.context["page"].object_list] == [
-        "cert-2.pdf"
-    ]
+    assert [d.original_filename for d in response.context["page"].object_list] == ["cert-2.pdf"]
 
 
 # --- bulk review ---

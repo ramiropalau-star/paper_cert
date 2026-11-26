@@ -33,6 +33,8 @@ from documents.services.labels import (
     sync_classification_tags,
 )
 from documents.services.paperless import DocumentStore
+from documents.services.review_reasons import merge_review_reasons
+from documents.services.state import transition_document
 
 UNKNOWN_ENTITY_LABEL = "Entidad pendiente de identificar"
 
@@ -498,9 +500,7 @@ def aggregate_reasons(certificate: Certificate) -> list[str]:
 
 
 def _merge_reasons(existing: list, fresh: list[str]) -> list[str]:
-    kept = [reason for reason in (existing or []) if reason not in CLASSIFICATION_REASON_CODES]
-    merged = kept + [reason for reason in fresh if reason not in kept]
-    return list(dict.fromkeys(merged))
+    return merge_review_reasons(existing, fresh, CLASSIFICATION_REASON_CODES)
 
 
 def classify_certificate(
@@ -551,10 +551,14 @@ def classify_certificate(
         certificate.review_reasons = _merge_reasons(certificate.review_reasons, reasons)
         certificate.save()
 
-        document.processing_state = Document.ProcessingState.PENDING_REVIEW.value
-        document.review_reasons = _merge_reasons(document.review_reasons, reasons)
-        document.error_reason = ""
-        document.save()
+        transition_document(
+            document,
+            Document.ProcessingState.PENDING_REVIEW.value,
+            fields={
+                "review_reasons": _merge_reasons(document.review_reasons, reasons),
+                "error_reason": "",
+            },
+        )
 
     needs_label = (
         certificate.is_language_certificate is False

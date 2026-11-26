@@ -114,10 +114,8 @@ def sync_classification_tags(document: Document, *, store: DocumentStore | None 
     try:
         current = set(selected.document_tag_names(document.paperless_document_id))
         managed = {tag for tag in current if tag.startswith(TAG_PREFIXES)}
-        for tag in managed - desired:
-            selected.remove_tag(document.paperless_document_id, tag)
-        for tag in desired - managed:
-            selected.add_tag(document.paperless_document_id, tag)
+        final = (current - managed) | desired
+        selected.set_tags(document.paperless_document_id, final)
         return True
     except Exception as exc:  # tag sync is best-effort; never block processing
         logger.warning(

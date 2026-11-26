@@ -15,6 +15,7 @@ from documents.services.paperless import (
     build_document_store,
 )
 from documents.services.staging import staged_upload
+from documents.services.state import transition_document
 from documents.services.validation import IntakeValidationError, validate_upload
 
 
@@ -64,25 +65,24 @@ def process_upload(
         with staged_upload(validated.data, validated.filename) as path:
             paperless_id = store.store_document(path, validated.filename, validated.content_type)
     except PaperlessError as exc:
-        document.processing_state = Document.ProcessingState.ERROR
-        document.error_reason = str(exc)
-        document.save(update_fields=["processing_state", "error_reason", "updated_at"])
+        transition_document(
+            document,
+            Document.ProcessingState.ERROR,
+            fields={"error_reason": str(exc)},
+        )
         return IntakeResult(document, error=str(exc), error_code="paperless_error")
     finally:
         if owns_store:
             store.close()
 
     with transaction.atomic():
-        document.paperless_document_id = paperless_id
-        document.processing_state = Document.ProcessingState.STORED
-        document.error_reason = ""
-        document.save(
-            update_fields=[
-                "paperless_document_id",
-                "processing_state",
-                "error_reason",
-                "updated_at",
-            ]
+        transition_document(
+            document,
+            Document.ProcessingState.STORED,
+            fields={
+                "paperless_document_id": paperless_id,
+                "error_reason": "",
+            },
         )
 
     notify_processing(document)

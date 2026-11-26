@@ -8,7 +8,6 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Prefetch, Q, QuerySet
@@ -18,6 +17,7 @@ from openpyxl.utils import get_column_letter
 
 from documents.models import Certificate, ReviewEvent
 from documents.services.classification import parse_date_text
+from documents.services.n8n import notify_report
 from reports.models import ReportJob
 
 logger = logging.getLogger("reports.services")
@@ -54,6 +54,30 @@ REVIEW_STATUS_LABELS = {
     Certificate.ReviewStatus.REJECTED: "Rechazado",
 }
 
+_DATE_FILTER_KEYS = ("issue_date", "issue_date_from", "issue_date_to")
+
+
+class ReportFilterError(ValueError):
+    """Raised when a report filter value cannot be interpreted."""
+
+
+def parse_report_filters(filters: dict[str, Any]) -> dict[str, date]:
+    """Validate the date filters and return them parsed.
+
+    Every provided ``issue_date*`` value must parse unambiguously; invalid or
+    ambiguous values raise ``ReportFilterError`` instead of being ignored.
+    """
+    parsed: dict[str, date] = {}
+    for key in _DATE_FILTER_KEYS:
+        raw = _norm(filters.get(key))
+        if not raw:
+            continue
+        value, ambiguous = parse_date_text(raw)
+        if value is None or ambiguous:
+            raise ReportFilterError(f"Filtro de fecha inválido o ambiguo: {key}={raw!r}")
+        parsed[key] = value
+    return parsed
+
 
 def _norm(value: Any) -> str:
     return str(value or "").strip()
@@ -68,6 +92,7 @@ def _maybe_id(value: str) -> int | None:
 
 def certificates_queryset(filters: dict[str, Any], *, status: str) -> QuerySet[Certificate]:
     """Certificates matching the report filters for a review status."""
+    parsed_dates = parse_report_filters(filters)
     queryset = (
         Certificate.objects.select_related("document", "language", "entity", "exam")
         .prefetch_related(
@@ -110,26 +135,24 @@ def certificates_queryset(filters: dict[str, Any], *, status: str) -> QuerySet[C
     if level:
         queryset = queryset.filter(Q(cefr_level__iexact=level) | Q(level_literal__icontains=level))
 
-    issue_exact = _norm(filters.get("issue_date"))
-    issue_from = _norm(filters.get("issue_date_from"))
-    issue_to = _norm(filters.get("issue_date_to"))
-    if issue_exact:
-        parsed, _ambiguous = parse_date_text(issue_exact)
-        if parsed is not None:
-            queryset = queryset.filter(issue_date=parsed)
+    issue_exact = parsed_dates.get("issue_date")
+    if issue_exact is not None:
+        queryset = queryset.filter(issue_date=issue_exact)
     else:
-        parsed, _ = parse_date_text(issue_from)
-        if parsed is not None:
-            queryset = queryset.filter(issue_date__gte=parsed)
-        parsed, _ = parse_date_text(issue_to)
-        if parsed is not None:
-            queryset = queryset.filter(issue_date__lte=parsed)
+        issue_from = parsed_dates.get("issue_date_from")
+        issue_to = parsed_dates.get("issue_date_to")
+        if issue_from is not None:
+            queryset = queryset.filter(issue_date__gte=issue_from)
+        if issue_to is not None:
+            queryset = queryset.filter(issue_date__lte=issue_to)
 
     return queryset.order_by("student_name", "id")
 
 
 def _date_cell(value: Any) -> date | None:
     if isinstance(value, datetime):
+        if timezone.is_aware(value):
+            return timezone.localtime(value).date()
         return value.date()
     if isinstance(value, date):
         return value
@@ -166,7 +189,7 @@ def _row_values(certificate: Certificate) -> list[Any]:
         (certificate.exam.name if certificate.exam_id else certificate.exam_literal) or "",
         certificate.score_literal,
         status_label,
-        _date_cell(document.updated_at),
+        _date_cell(document.processed_at or document.updated_at),
         document.paperless_document_id or str(document.pk),
         document.original_filename,
         certificate.certificate_code,
@@ -214,14 +237,21 @@ def generate_report(job: ReportJob) -> ReportJob:
     filters = job.filters or {}
     include_pending = bool(filters.get("include_pending", True))
 
-    approved = list(certificates_queryset(filters, status=Certificate.ReviewStatus.APPROVED))
-    pending = (
-        list(certificates_queryset(filters, status=Certificate.ReviewStatus.PENDING))
-        + list(certificates_queryset(filters, status=Certificate.ReviewStatus.VALIDATED))
-        if include_pending
-        else []
-    )
-    rejected = list(certificates_queryset(filters, status=Certificate.ReviewStatus.REJECTED))
+    try:
+        approved = list(certificates_queryset(filters, status=Certificate.ReviewStatus.APPROVED))
+        pending = (
+            list(certificates_queryset(filters, status=Certificate.ReviewStatus.PENDING))
+            + list(certificates_queryset(filters, status=Certificate.ReviewStatus.VALIDATED))
+            if include_pending
+            else []
+        )
+        rejected = list(certificates_queryset(filters, status=Certificate.ReviewStatus.REJECTED))
+    except ReportFilterError as exc:
+        job.status = ReportJob.Status.ERROR
+        job.error_reason = str(exc)
+        job.completed_at = timezone.now()
+        job.save()
+        return job
 
     if not approved and not pending and not rejected:
         job.status = ReportJob.Status.ERROR
@@ -230,9 +260,7 @@ def generate_report(job: ReportJob) -> ReportJob:
         job.save()
         return job
 
-    content = build_workbook(
-        approved, pending if include_pending else None, rejected or None
-    )
+    content = build_workbook(approved, pending if include_pending else None, rejected or None)
     stamp = timezone.now().strftime("%Y%m%d-%H%M%S")
     filename = f"certificados-{job.pk}-{stamp}.xlsx"
     path = _report_dir() / filename
@@ -240,6 +268,12 @@ def generate_report(job: ReportJob) -> ReportJob:
 
     job.status = ReportJob.Status.READY
     job.artifact_path = str(path)
+    job.counts = {
+        "approved": len(approved),
+        "pending": len(pending),
+        "rejected": len(rejected),
+        "total": len(approved) + len(pending) + len(rejected),
+    }
     job.error_reason = ""
     job.completed_at = timezone.now()
     job.save()
@@ -260,31 +294,12 @@ def run_report_job(job_id: int) -> ReportJob | None:
     return generate_report(job)
 
 
-def _notify_report(job: ReportJob) -> None:
-    """Best-effort trigger of the n8n report flow."""
-    url = str(settings.APP.get("n8n_report_webhook_url") or "")
-    if not url:
-        return
-    token = str(settings.APP.get("n8n_webhook_token") or "")
-    try:
-        httpx.post(
-            url,
-            json={"report_job_id": job.pk},
-            headers={"X-Webhook-Token": token},
-            timeout=10.0,
-        )
-    except httpx.HTTPError as exc:
-        logger.warning(
-            "n8n_report_trigger_failed",
-            extra={"report_job_id": job.pk, "error": str(exc)},
-        )
-
-
 def create_report_job(filters: dict[str, Any], user) -> ReportJob:
+    parse_report_filters(filters)
     job = ReportJob.objects.create(
         filters=filters,
         requested_by=user,
         status=ReportJob.Status.QUEUED,
     )
-    _notify_report(job)
+    notify_report(job)
     return job

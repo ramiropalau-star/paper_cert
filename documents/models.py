@@ -30,6 +30,7 @@ class Document(models.Model):
     content_type = models.CharField(max_length=100, blank=True)
     size_bytes = models.PositiveBigIntegerField(default=0)
     paperless_document_id = models.CharField(max_length=100, blank=True, db_index=True)
+    processed_at = models.DateTimeField(null=True, blank=True, db_index=True)
     page_count = models.PositiveIntegerField(null=True, blank=True)
     text_method = models.CharField(
         max_length=10, choices=TextMethod.choices, blank=True, default=""
@@ -42,6 +43,8 @@ class Document(models.Model):
     )
     error_reason = models.TextField(blank=True)
     review_reasons = models.JSONField(default=list, blank=True)
+    recovery_attempts = models.PositiveIntegerField(default=0)
+    last_recovery_at = models.DateTimeField(null=True, blank=True)
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name="uploaded_documents",
@@ -164,6 +167,21 @@ class Certificate(models.Model):
 
     def __str__(self) -> str:
         return self.student_name or f"Certificate for {self.document_id}"
+
+
+class PaperlessSyncState(models.Model):
+    """Singleton watermark for incremental Paperless sync (pk is always 1)."""
+
+    last_added = models.DateTimeField(null=True, blank=True)
+    last_paperless_id = models.CharField(max_length=100, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Paperless sync state"
+        verbose_name_plural = "Paperless sync state"
+
+    def __str__(self) -> str:
+        return f"Sync watermark: {self.last_added}"
 
 
 class ReviewEvent(models.Model):

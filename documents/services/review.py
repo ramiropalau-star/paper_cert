@@ -15,6 +15,11 @@ from documents.services.labels import (
 )
 from documents.services.n8n import notify_processing
 from documents.services.paperless import DocumentStore
+from documents.services.state import (
+    StateTransitionError,
+    transition_certificate,
+    transition_document,
+)
 
 EDITABLE_FIELDS = (
     "student_name",
@@ -61,14 +66,6 @@ def _serialize(value: Any) -> Any:
     if hasattr(value, "pk"):
         return f"{value._meta.label}:{value.pk}"
     return value
-
-
-def snapshot_certificate(certificate: Certificate) -> dict[str, Any]:
-    return {
-        field: _serialize(getattr(certificate, field))
-        for field in EDITABLE_FIELDS
-        if field in {f.name for f in certificate._meta.fields}
-    }
 
 
 def _apply_edit(certificate: Certificate, cleaned: dict[str, Any]) -> dict[str, Any]:
@@ -189,26 +186,27 @@ def approve_certificate(
             error="Faltan campos obligatorios: " + ", ".join(labels),
             missing=tuple(missing),
         )
-    with transaction.atomic():
-        before = {
-            "review_status": certificate.review_status,
-            "processing_state": certificate.document.processing_state,
-        }
-        certificate.review_status = Certificate.ReviewStatus.APPROVED
-        certificate.save(update_fields=["review_status", "updated_at"])
-        document = certificate.document
-        document.processing_state = Document.ProcessingState.APPROVED
-        document.save(update_fields=["processing_state", "updated_at"])
-        ReviewEvent.objects.create(
-            certificate=certificate,
-            event_type=ReviewEvent.EventType.APPROVE,
-            actor=actor,
-            before=before,
-            after={
-                "review_status": Certificate.ReviewStatus.APPROVED,
-                "processing_state": Document.ProcessingState.APPROVED,
-            },
-        )
+    try:
+        with transaction.atomic():
+            before = {
+                "review_status": certificate.review_status,
+                "processing_state": certificate.document.processing_state,
+            }
+            transition_certificate(certificate, Certificate.ReviewStatus.APPROVED)
+            document = certificate.document
+            transition_document(document, Document.ProcessingState.APPROVED)
+            ReviewEvent.objects.create(
+                certificate=certificate,
+                event_type=ReviewEvent.EventType.APPROVE,
+                actor=actor,
+                before=before,
+                after={
+                    "review_status": Certificate.ReviewStatus.APPROVED,
+                    "processing_state": Document.ProcessingState.APPROVED,
+                },
+            )
+    except StateTransitionError:
+        return ReviewOutcome(ok=False, error="No se permite aprobar un certificado en este estado.")
     remove_manual_review_label(document, store=store)
     return ReviewOutcome(ok=True)
 
@@ -219,23 +217,21 @@ def validate_certificate(certificate: Certificate, actor) -> ReviewOutcome:
     Validation records that a human checked the extracted values; the
     document remains in ``pending_review`` until it is approved for reports.
     """
-    if certificate.review_status == Certificate.ReviewStatus.REJECTED:
-        return ReviewOutcome(ok=False, error="No se puede validar un registro rechazado.")
-    if certificate.review_status == Certificate.ReviewStatus.APPROVED:
-        return ReviewOutcome(ok=False, error="El registro ya está aprobado.")
     if certificate.review_status == Certificate.ReviewStatus.VALIDATED:
         return ReviewOutcome(ok=True)
-    with transaction.atomic():
-        before = {"review_status": certificate.review_status}
-        certificate.review_status = Certificate.ReviewStatus.VALIDATED
-        certificate.save(update_fields=["review_status", "updated_at"])
-        ReviewEvent.objects.create(
-            certificate=certificate,
-            event_type=ReviewEvent.EventType.VALIDATE,
-            actor=actor,
-            before=before,
-            after={"review_status": Certificate.ReviewStatus.VALIDATED},
-        )
+    try:
+        with transaction.atomic():
+            before = {"review_status": certificate.review_status}
+            transition_certificate(certificate, Certificate.ReviewStatus.VALIDATED)
+            ReviewEvent.objects.create(
+                certificate=certificate,
+                event_type=ReviewEvent.EventType.VALIDATE,
+                actor=actor,
+                before=before,
+                after={"review_status": Certificate.ReviewStatus.VALIDATED},
+            )
+    except StateTransitionError:
+        return ReviewOutcome(ok=False, error="No se permite validar un certificado en este estado.")
     return ReviewOutcome(ok=True)
 
 
@@ -247,26 +243,29 @@ def reject_certificate(
     reason = (reason or "").strip()
     if not reason:
         return ReviewOutcome(ok=False, error="El motivo de rechazo es obligatorio.")
-    with transaction.atomic():
-        before = {
-            "review_status": certificate.review_status,
-            "processing_state": certificate.document.processing_state,
-        }
-        certificate.review_status = Certificate.ReviewStatus.REJECTED
-        certificate.save(update_fields=["review_status", "updated_at"])
-        document = certificate.document
-        document.processing_state = Document.ProcessingState.REJECTED
-        document.save(update_fields=["processing_state", "updated_at"])
-        ReviewEvent.objects.create(
-            certificate=certificate,
-            event_type=ReviewEvent.EventType.REJECT,
-            actor=actor,
-            reason=reason,
-            before=before,
-            after={
-                "review_status": Certificate.ReviewStatus.REJECTED,
-                "processing_state": Document.ProcessingState.REJECTED,
-            },
+    try:
+        with transaction.atomic():
+            before = {
+                "review_status": certificate.review_status,
+                "processing_state": certificate.document.processing_state,
+            }
+            transition_certificate(certificate, Certificate.ReviewStatus.REJECTED)
+            document = certificate.document
+            transition_document(document, Document.ProcessingState.REJECTED)
+            ReviewEvent.objects.create(
+                certificate=certificate,
+                event_type=ReviewEvent.EventType.REJECT,
+                actor=actor,
+                reason=reason,
+                before=before,
+                after={
+                    "review_status": Certificate.ReviewStatus.REJECTED,
+                    "processing_state": Document.ProcessingState.REJECTED,
+                },
+            )
+    except StateTransitionError:
+        return ReviewOutcome(
+            ok=False, error="No se permite rechazar un certificado en este estado."
         )
     return ReviewOutcome(ok=True)
 
@@ -276,26 +275,35 @@ def reprocess_document(
 ) -> ReviewOutcome:
     """Reset the document for a new pipeline run, preserving history."""
     certificate = getattr(document, "certificate", None)
-    with transaction.atomic():
-        before = {
-            "processing_state": document.processing_state,
-            "review_status": (certificate.review_status if certificate is not None else ""),
-        }
-        document.processing_state = Document.ProcessingState.STORED
-        document.error_reason = ""
-        document.save(update_fields=["processing_state", "error_reason", "updated_at"])
-        if certificate is not None:
-            certificate.review_status = Certificate.ReviewStatus.PENDING
-            certificate.save(update_fields=["review_status", "updated_at"])
-            ReviewEvent.objects.create(
-                certificate=certificate,
-                event_type=ReviewEvent.EventType.REPROCESS,
-                actor=actor,
-                before=before,
-                after={
-                    "processing_state": Document.ProcessingState.STORED,
-                    "review_status": Certificate.ReviewStatus.PENDING,
-                },
+    try:
+        with transaction.atomic():
+            before = {
+                "processing_state": document.processing_state,
+                "review_status": (certificate.review_status if certificate is not None else ""),
+            }
+            transition_document(
+                document,
+                Document.ProcessingState.STORED,
+                fields={"error_reason": "", "recovery_attempts": 0},
+                reprocess=True,
             )
+            if certificate is not None:
+                transition_certificate(
+                    certificate, Certificate.ReviewStatus.PENDING, reprocess=True
+                )
+                ReviewEvent.objects.create(
+                    certificate=certificate,
+                    event_type=ReviewEvent.EventType.REPROCESS,
+                    actor=actor,
+                    before=before,
+                    after={
+                        "processing_state": Document.ProcessingState.STORED,
+                        "review_status": Certificate.ReviewStatus.PENDING,
+                    },
+                )
+    except StateTransitionError:
+        return ReviewOutcome(
+            ok=False, error="No se permite reprocesar un documento en este estado."
+        )
     notify_processing(document)
     return ReviewOutcome(ok=True)

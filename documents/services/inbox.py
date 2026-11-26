@@ -64,7 +64,9 @@ def watch_inbox(poll_seconds: float | None = None) -> None:  # pragma: no cover
         poll_seconds if poll_seconds is not None else settings.APP["inbox_poll_seconds"]
     )
     sync_interval = float(settings.APP.get("paperless_sync_seconds") or 0)
+    recovery_interval = float(settings.APP.get("recovery_interval_seconds") or 0)
     last_sync = 0.0
+    last_recovery = 0.0
     webhook_ok = False
     try:
         from documents.management.commands.provision_paperless_webhook import (
@@ -106,4 +108,13 @@ def watch_inbox(poll_seconds: float | None = None) -> None:  # pragma: no cover
                     )
             except Exception:
                 logger.exception("Paperless sync failed")
+        now = time.monotonic()
+        if recovery_interval > 0 and now - last_recovery >= recovery_interval:
+            last_recovery = now
+            try:
+                from documents.services.recovery import recover_stuck
+
+                recover_stuck()
+            except Exception:
+                logger.exception("Stuck-work recovery failed")
         time.sleep(interval)

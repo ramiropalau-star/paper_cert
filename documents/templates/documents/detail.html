@@ -21,26 +21,24 @@
           {% if certificate.review_status == "pending" %}
           <form method="post" action="{% url 'documents:validate' document.pk %}" class="inline-form">
             {% csrf_token %}
-            <button type="submit" class="button">Validar</button>
+            <button type="submit" class="button" aria-label="Marcar el certificado como validado">Validar</button>
           </form>
           {% endif %}
           <form method="post" action="{% url 'documents:approve' document.pk %}" class="inline-form">
             {% csrf_token %}
-            <button type="submit" class="button">Aprobar</button>
+            <button type="submit" class="button" aria-label="Aprobar el certificado extraído">Aprobar</button>
           </form>
           <form method="post" action="{% url 'documents:reject' document.pk %}" class="inline-form">
             {% csrf_token %}
-            <input type="text" name="reason" placeholder="Motivo del rechazo" required>
-            <button type="submit" class="button danger">Rechazar</button>
+            <input type="text" name="reason" placeholder="Motivo del rechazo" required aria-label="Motivo del rechazo">
+            <button type="submit" class="button danger" aria-label="Rechazar el certificado con el motivo indicado">Rechazar</button>
           </form>
-          <form method="post" action="{% url 'documents:reprocess' document.pk %}" class="inline-form">
-            {% csrf_token %}
-            <button type="submit" class="button">Reprocesar</button>
+          <form method="post" action="{% url 'documents:reprocess' document.pk %}" class="inline-form reprocess-form">
+            {% include "documents/_reprocess_form.html" %}
           </form>
         {% elif certificate is not None and can_review %}
-          <form method="post" action="{% url 'documents:reprocess' document.pk %}" class="inline-form">
-            {% csrf_token %}
-            <button type="submit" class="button">Reprocesar</button>
+          <form method="post" action="{% url 'documents:reprocess' document.pk %}" class="inline-form reprocess-form">
+            {% include "documents/_reprocess_form.html" %}
           </form>
         {% endif %}
 
@@ -64,31 +62,42 @@
         {% if certificate is None %}
           <p class="form-error">Este documento no tiene datos extraídos.</p>
           {% if can_review %}
-            <form method="post" action="{% url 'documents:reprocess' document.pk %}">
-              {% csrf_token %}
-              <button type="submit" class="button">Reprocesar</button>
+            <form method="post" action="{% url 'documents:reprocess' document.pk %}" class="reprocess-form">
+              {% include "documents/_reprocess_form.html" %}
             </form>
           {% endif %}
         {% else %}
           <h2>Datos extraídos</h2>
-          {% if certificate.review_status != "approved" and certificate.review_reasons %}
-            <ul class="review-reasons">
-              {% for reason in certificate.review_reasons %}<li>{{ reason }}</li>{% endfor %}
-            </ul>
+          {% if certificate.review_status != "approved" and certificate.review_status != "rejected" %}
+            {% if reason_items %}
+              <ul class="review-reasons">
+                {% for item in reason_items %}
+                  <li>
+                    <strong>{{ item.label }}</strong> — {{ item.explanation }}
+                    <a href="#datos">Ver campos</a>
+                    {% if not item.known %}
+                      <details class="reason-code"><summary>Ver código</summary><code>{{ item.code }}</code></details>
+                    {% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <p class="no-observations">Sin observaciones.</p>
+            {% endif %}
           {% endif %}
 
           <form method="post" action="{% url 'documents:edit' document.pk %}" id="cert-form">
             {% csrf_token %}
             <table class="data-table review-fields{% if editing %} is-editing{% endif %}" id="datos">
               <tbody>
-                <tr>
+                <tr id="f-student">
                   <th>Alumno</th>
-                  <td class="cell-view">{{ certificate.student_name|default:"—" }}{% if warnings.fields %} <span class="warn">⚠ {{ warnings.fields }}</span>{% endif %}</td>
+                  <td class="cell-view">{{ certificate.student_name|default:"—" }}{% if warnings.fields %} <a class="warn" href="#datos">⚠ {{ warnings.fields }}</a>{% endif %}</td>
                   <td class="cell-edit">{{ form.student_name }}</td>
                 </tr>
-                <tr>
+                <tr id="f-language">
                   <th>Idioma</th>
-                  <td class="cell-view">{{ certificate.language.name|default:certificate.language_literal|default:"—" }}{% if warnings.language_literal %} <span class="warn">⚠ {{ warnings.language_literal }}</span>{% endif %}</td>
+                  <td class="cell-view">{{ certificate.language.name|default:certificate.language_literal|default:"—" }}{% if warnings.language_literal %} <a class="warn" href="#f-language">⚠ {{ warnings.language_literal }}</a>{% endif %}</td>
                   <td class="cell-edit">
                     <div class="edit-stack">
                       <label>Catálogo{{ form.language }}</label>
@@ -96,9 +105,9 @@
                     </div>
                   </td>
                 </tr>
-                <tr>
+                <tr id="f-entity">
                   <th>Entidad certificadora</th>
-                  <td class="cell-view">{{ certificate.entity.name|default:certificate.entity_literal|default:"—" }}{% if warnings.entity_literal %} <span class="warn">⚠ {{ warnings.entity_literal }}</span>{% endif %}</td>
+                  <td class="cell-view">{{ certificate.entity.name|default:certificate.entity_literal|default:"—" }}{% if warnings.entity_literal %} <a class="warn" href="#f-entity">⚠ {{ warnings.entity_literal }}</a>{% endif %}</td>
                   <td class="cell-edit">
                     <div class="edit-stack">
                       <label>Catálogo{{ form.entity }}</label>
@@ -161,9 +170,9 @@
                   <td class="cell-view">{{ certificate.result_date|date:"Y-m-d"|default:"—" }}</td>
                   <td class="cell-edit">{{ form.result_date }}</td>
                 </tr>
-                <tr>
+                <tr id="f-dates">
                   <th>Fecha detectada</th>
-                  <td class="cell-view">{{ certificate.detected_date|date:"Y-m-d"|default:"—" }}{% if warnings.dates %} <span class="warn">⚠ {{ warnings.dates }}</span>{% endif %}</td>
+                  <td class="cell-view">{{ certificate.detected_date|date:"Y-m-d"|default:"—" }}{% if warnings.dates %} <a class="warn" href="#f-dates">⚠ {{ warnings.dates }}</a>{% endif %}</td>
                   <td class="cell-edit">{{ form.detected_date }}</td>
                 </tr>
                 <tr>
@@ -171,9 +180,18 @@
                   <td class="cell-view">{{ certificate.certificate_code|default:"—" }}</td>
                   <td class="cell-edit">{{ form.certificate_code }}</td>
                 </tr>
-                <tr>
+                <tr id="f-confidence">
                   <th>Confianza</th>
-                  <td colspan="2">{% if certificate.confidence is not None %}{{ certificate.confidence|floatformat:2 }}{% else %}—{% endif %}{% if warnings.confidence %} <span class="warn">⚠ {{ warnings.confidence }}</span>{% endif %}</td>
+                  <td colspan="2">
+                    {% if confidence %}
+                      <span class="confidence-value">{{ confidence.percent }}%</span>
+                      <span class="confidence-badge band-{{ confidence.band }}">{{ confidence.band_label }}</span>
+                      <details class="confidence-raw"><summary>Valor</summary><code>{{ confidence.raw }}</code></details>
+                    {% else %}
+                      No disponible
+                    {% endif %}
+                    {% if warnings.confidence %} <a class="warn" href="#f-confidence">⚠ {{ warnings.confidence }}</a>{% endif %}
+                  </td>
                 </tr>
                 <tr>
                   <th>Estado de revisión</th>
@@ -185,7 +203,7 @@
             {% if can_review %}
               <p class="form-actions">
                 {% if editing %}
-                  <button type="submit" class="button">Guardar cambios</button>
+                  <button type="submit" class="button" aria-label="Guardar los cambios manuales">Guardar cambios</button>
                   <a class="button" href="{% url 'documents:detail' document.pk %}#datos">Cancelar</a>
                 {% else %}
                   <a class="button" href="{% url 'documents:detail' document.pk %}?edit=1#datos">Editar</a>
@@ -211,7 +229,7 @@
               <a class="button" href="{% url 'documents:original' document.pk %}" target="_blank" rel="noopener">Abrir original</a>
             {% endif %}
             {% if can_delete %}
-              <a class="button danger" href="{% url 'documents:delete' document.pk %}">Eliminar</a>
+              <a class="button danger" href="{% url 'documents:delete' document.pk %}" aria-label="Eliminar el documento y sus datos">Eliminar</a>
             {% endif %}
           </p>
 

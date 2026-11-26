@@ -156,8 +156,7 @@ def validate_upload(data: bytes, filename: str, content_type: str) -> ValidatedU
         )
 
     if sniffed_type not in ALLOWED_CONTENT_TYPES and (
-        (content_type or "").split(";", 1)[0].strip().lower()
-        not in ALLOWED_CONTENT_TYPES
+        (content_type or "").split(";", 1)[0].strip().lower() not in ALLOWED_CONTENT_TYPES
     ):
         raise IntakeValidationError(
             "unsupported_mime",

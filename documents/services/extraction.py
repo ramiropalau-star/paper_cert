@@ -15,12 +15,14 @@ from typing import Any, Literal
 
 from django.conf import settings
 from django.db import transaction
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from documents.models import Certificate, Document
 from documents.services.labels import apply_manual_review_label
 from documents.services.ollama import OllamaClient, OllamaError, build_ollama_client
 from documents.services.paperless import DocumentStore
+from documents.services.review_reasons import merge_review_reasons
+from documents.services.state import transition_document
 
 logger = logging.getLogger("documents.extraction")
 
@@ -173,7 +175,7 @@ class FieldEvidence(BaseModel):
 class FieldValue(BaseModel):
     value: str | None
     evidence: FieldEvidence | None
-    confidence: float | None
+    confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 DateRole = Literal["issue", "exam", "result", "unknown"]
@@ -199,7 +201,7 @@ class ExtractionPayload(BaseModel):
     score: FieldValue
     certificate_code: FieldValue
     dates: list[DateCandidate]
-    confidence: float | None
+    confidence: float | None = Field(default=None, ge=0, le=1)
 
 
 LITERAL_FIELDS = {
@@ -256,13 +258,7 @@ def parse_payload(content: str) -> ExtractionPayload:
 
 
 def _reason_list(document: Document, reasons: list[str]) -> list[str]:
-    existing = [
-        reason
-        for reason in (document.review_reasons or [])
-        if reason not in EXTRACTION_REASON_CODES
-    ]
-    merged = existing + [reason for reason in reasons if reason not in existing]
-    return list(dict.fromkeys(merged))
+    return merge_review_reasons(document.review_reasons, reasons, EXTRACTION_REASON_CODES)
 
 
 def _save(
@@ -272,10 +268,11 @@ def _save(
     reasons: list[str],
     error: str,
 ) -> None:
-    document.processing_state = state
-    document.error_reason = error
-    document.review_reasons = _reason_list(document, reasons)
-    document.save()
+    transition_document(
+        document,
+        state,
+        fields={"error_reason": error, "review_reasons": _reason_list(document, reasons)},
+    )
 
 
 def _fail(
@@ -344,8 +341,48 @@ def _persist_certificate(document: Document, payload: ExtractionPayload) -> Cert
     return certificate
 
 
-def _call_model(llm: OllamaClient, text: str) -> ExtractionPayload:
-    """Call the model and validate output, retrying bounded times."""
+def _norm_text(text: str) -> str:
+    return " ".join((text or "").split()).casefold()
+
+
+def _quote_in_page(quote: str, page_text: str) -> bool:
+    needle = _norm_text(quote)
+    return bool(needle) and needle in _norm_text(page_text)
+
+
+def _validate_evidence(payload: ExtractionPayload, page_texts: dict[int, str]) -> None:
+    """Reject output whose evidence quotes do not appear on the cited page."""
+    for name in LITERAL_FIELDS:
+        field = getattr(payload, name)
+        if field.evidence is None:
+            continue
+        page_text = page_texts.get(field.evidence.page)
+        if page_text is None or not _quote_in_page(field.evidence.quote, page_text):
+            raise ValueError(f"evidence quote for '{name}' not found on page {field.evidence.page}")
+    for index, candidate in enumerate(payload.dates):
+        if candidate.page is None or candidate.quote is None:
+            continue
+        page_text = page_texts.get(candidate.page)
+        if page_text is None or not _quote_in_page(candidate.quote, page_text):
+            raise ValueError(
+                f"evidence quote for dates[{index}] not found on page {candidate.page}"
+            )
+
+
+def _page_texts(document: Document) -> dict[int, str]:
+    return {page.page_number: page.text for page in document.pages.all()}
+
+
+def _call_model(
+    llm: OllamaClient,
+    text: str,
+    page_texts: dict[int, str],
+) -> ExtractionPayload:
+    """Call the model and validate output, retrying bounded times.
+
+    Each invalid attempt feeds the validation error and the invalid output
+    back to the model as repair context instead of resending the same prompt.
+    """
     messages = build_messages(text)
     last_error: Exception | None = None
     for _attempt in range(MAX_INVALID_ATTEMPTS):
@@ -355,9 +392,24 @@ def _call_model(llm: OllamaClient, text: str) -> ExtractionPayload:
             temperature=0.0,
         )
         try:
-            return parse_payload(content)
+            payload = parse_payload(content)
+            _validate_evidence(payload, page_texts)
+            return payload
         except (json.JSONDecodeError, ValidationError, ValueError) as exc:
             last_error = exc
+            messages.append({"role": "assistant", "content": content})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous answer failed validation. "
+                        f"Error: {exc}\n"
+                        "Return ONLY corrected JSON matching the schema, "
+                        "with verbatim evidence quotes taken from the cited "
+                        "page and confidence values between 0 and 1."
+                    ),
+                }
+            )
             logger.info(
                 "extraction_invalid_output",
                 extra={"outcome": "retry", "error": str(exc)[:200]},
@@ -409,7 +461,7 @@ def extract_certificate(
 
         selected_llm = selected_llm or build_ollama_client()
         try:
-            payload = _call_model(selected_llm, text)
+            payload = _call_model(selected_llm, text, _page_texts(document))
         except OllamaError as exc:
             return _fail(
                 document,

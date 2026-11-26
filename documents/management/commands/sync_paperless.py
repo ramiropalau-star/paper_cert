@@ -6,11 +6,20 @@ from documents.services.sync import sync_paperless_documents
 class Command(BaseCommand):
     help = "Ingest into Django every Paperless document missing locally."
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--full",
+            action="store_true",
+            help="Ignore the sync watermark and reconcile the whole archive.",
+        )
+
     def handle(self, *args, **options):
-        result = sync_paperless_documents()
+        full = bool(options.get("full"))
+        result = sync_paperless_documents(full=full)
+        mode = "completa" if full else "incremental"
         self.stdout.write(
             self.style.SUCCESS(
-                f"Sync Paperless: {result.scanned} escaneados, "
+                f"Sync Paperless ({mode}): {result.scanned} escaneados, "
                 f"{result.ingested} ingeridos, {result.duplicates} duplicados, "
                 f"{len(result.errors)} errores."
             )

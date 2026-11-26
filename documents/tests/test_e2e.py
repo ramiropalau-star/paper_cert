@@ -15,6 +15,7 @@ from documents.services.ocr import OcrPage, OcrResult
 from documents.services.review import approve_certificate
 from documents.services.text import acquire_text
 from tests.fixturegen import (
+    CERTIFICATE_LINES,
     ambiguous_date_pdf_bytes,
     heic_bytes,
     incomplete_pdf_bytes,
@@ -106,10 +107,11 @@ class StubOCR:
         pass
 
 
-def field(value, *, page: int = 1, quote: str = "quote", confidence: float = 0.9):
+def field(value, *, page: int = 1, quote: str | None = None, confidence: float = 0.9):
+    evidence = {"page": page, "quote": quote} if quote is not None else None
     return {
         "value": value,
-        "evidence": {"page": page, "quote": quote},
+        "evidence": evidence,
         "confidence": confidence,
     }
 
@@ -147,7 +149,7 @@ def run_pipeline(
     content_type: str,
     *,
     llm_payload: dict,
-    ocr_text: str = "certificate text with enough characters for acquisition",
+    ocr_text: str = "\n".join(CERTIFICATE_LINES),
     ocr_pages: int = 1,
 ):
     """Run upload -> acquire -> extract -> classify with fakes."""
@@ -201,7 +203,7 @@ def test_scanned_pdf_end_to_end_uses_ocr():
         "scan.pdf",
         "application/pdf",
         llm_payload=payload_dict(),
-        ocr_text="Scanned certificate text Ada Lovelace English Cambridge B2",
+        ocr_text="Scanned certificate\n" + "\n".join(CERTIFICATE_LINES),
     )
 
     assert document.text_method == Document.TextMethod.OCR.value
@@ -257,6 +259,7 @@ def test_multipage_pdf_end_to_end():
 
 def test_incomplete_certificate_routes_to_review():
     payload = payload_dict()
+    payload["student_name"] = field("Grace Hopper", quote="Student Name: Grace Hopper")
     payload["level"] = field(None)
     payload["score"] = field(None)
     payload["dates"] = []
@@ -270,8 +273,17 @@ def test_incomplete_certificate_routes_to_review():
 
 def test_unknown_entity_stays_literal_and_reviews():
     payload = payload_dict()
+    payload["student_name"] = field("Katherine Johnson", quote="Student Name: Katherine Johnson")
     payload["entity"] = field("Acme Language Board")
     payload["exam"] = field("Proficiency Test")
+    payload["dates"] = [
+        {
+            "text": "2024-03-01",
+            "role": "issue",
+            "page": 1,
+            "quote": "Date of Issue: 2024-03-01",
+        }
+    ]
     document, store, _llm = run_pipeline(
         unknown_entity_pdf_bytes(), "unknown.pdf", "application/pdf", llm_payload=payload
     )
@@ -284,6 +296,8 @@ def test_unknown_entity_stays_literal_and_reviews():
 
 def test_non_certificate_labeled_otros():
     payload = payload_dict(is_language_certificate=False)
+    payload["student_name"] = field(None)
+    payload["dates"] = []
     document, store, _llm = run_pipeline(
         non_certificate_pdf_bytes(), "invoice.pdf", "application/pdf", llm_payload=payload
     )
@@ -295,6 +309,7 @@ def test_non_certificate_labeled_otros():
 def test_ambiguous_date_triggers_review():
     payload = payload_dict()
     # IELTS has no seeded date_order, so day/month stays ambiguous.
+    payload["student_name"] = field("Alan Turing", quote="Student Name: Alan Turing")
     payload["entity"] = field("IELTS")
     payload["dates"] = [
         {

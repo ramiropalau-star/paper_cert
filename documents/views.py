@@ -1,15 +1,15 @@
 """Upload, review, and internal pipeline views for documents."""
 
+import logging
 import mimetypes
-from datetime import date
 from urllib.parse import urlencode
 
 import magic
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.cache import cache
 from django.core.paginator import Paginator
-from django.db.models import Q
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -26,8 +26,10 @@ from core.permissions import (
     can_review_documents,
     role_required,
 )
+from documents.filters import filter_documents
 from documents.forms import CertificateEditForm
 from documents.models import Document, ReviewEvent
+from documents.review_display import confidence_display, review_reason_items
 from documents.services.classification import (
     classify_certificate,
     equivalence_tooltip,
@@ -46,6 +48,11 @@ from documents.services.review import (
     validate_certificate,
 )
 from documents.services.text import acquire_text
+
+logger = logging.getLogger("documents.views")
+
+DELETE_ALL_CONFIRM = "DELETE-UNTRACKED"
+DELETE_ALL_SCOPES = {"tracked", "untracked"}
 
 
 @login_required
@@ -114,51 +121,130 @@ def delete(request, pk: int):
     return redirect("home")
 
 
+def _tracked_paperless_ids() -> set[str]:
+    return {
+        str(pk)
+        for pk in Document.objects.exclude(paperless_document_id="").values_list(
+            "paperless_document_id", flat=True
+        )
+    }
+
+
+def _delete_remote_documents(store, remote_ids) -> tuple[int, list[str]]:
+    deleted = 0
+    errors = []
+    for remote_id in remote_ids:
+        try:
+            store.delete_document(remote_id)
+            deleted += 1
+        except PaperlessError as exc:
+            errors.append(f"#{remote_id}: {exc}")
+    return deleted, errors
+
+
 @login_required
 @role_required(ROLE_ADMIN)
 @require_http_methods(["GET", "POST"])
 def delete_all(request):
-    """Wipe every document: Django records and Paperless originals.
+    """Scoped bulk deletion.
 
-    Paperless originals must go too, otherwise the periodic sync would
-    re-ingest them on the next cycle.
+    ``scope=tracked`` (default) removes Django records and the Paperless
+    originals the application tracks. ``scope=untracked`` removes only
+    Paperless documents the application does not track and requires a typed
+    confirmation. Both paths emit a structured ``bulk_delete`` audit event.
     """
     if request.method == "GET":
+        untracked_count = None
+        store = build_document_store()
+        try:
+            remote_ids = {str(item.get("id")) for item in store.list_documents() if item.get("id")}
+            untracked_count = len(remote_ids - _tracked_paperless_ids())
+        except PaperlessError:
+            untracked_count = None
+        finally:
+            store.close()
         return render(
             request,
             "documents/delete_all.html",
-            {"count": Document.objects.count()},
+            {
+                "count": Document.objects.count(),
+                "untracked_count": untracked_count,
+                "confirm_token": DELETE_ALL_CONFIRM,
+            },
         )
 
+    scope = request.POST.get("scope") or "tracked"
+    if scope not in DELETE_ALL_SCOPES:
+        messages.error(request, "Scope de eliminación no válido.")
+        return redirect("documents:delete_all")
+
+    if scope == "untracked" and request.POST.get("confirm") != DELETE_ALL_CONFIRM:
+        messages.error(
+            request,
+            f"Para eliminar documentos no rastreados escribí "
+            f"«{DELETE_ALL_CONFIRM}» en el campo de confirmación.",
+        )
+        return redirect("documents:delete_all")
+
+    document_count = Document.objects.count()
     store = build_document_store()
-    paperless_deleted = 0
     paperless_errors = []
+    paperless_deleted = 0
     try:
-        for metadata in store.list_documents():
-            remote_id = str(metadata.get("id") or "")
-            if not remote_id:
-                continue
-            try:
-                store.delete_document(remote_id)
-                paperless_deleted += 1
-            except PaperlessError as exc:
-                paperless_errors.append(f"#{remote_id}: {exc}")
+        if scope == "untracked":
+            remote_ids = [str(item.get("id")) for item in store.list_documents() if item.get("id")]
+            untracked_ids = [
+                remote_id for remote_id in remote_ids if remote_id not in _tracked_paperless_ids()
+            ]
+            paperless_deleted, remote_errors = _delete_remote_documents(store, untracked_ids)
+            paperless_errors.extend(remote_errors)
+        else:
+            tracked_ids = sorted(_tracked_paperless_ids())
+            paperless_deleted, remote_errors = _delete_remote_documents(store, tracked_ids)
+            paperless_errors.extend(remote_errors)
+            Document.objects.all().delete()
     except PaperlessError as exc:
         paperless_errors.append(str(exc))
     finally:
         store.close()
 
-    deleted, _ = Document.objects.all().delete()
+    logger.info(
+        "bulk_delete",
+        extra={
+            "actor": request.user.get_username(),
+            "scope": scope,
+            "document_count": document_count if scope == "tracked" else 0,
+            "untracked_count": paperless_deleted if scope == "untracked" else 0,
+            "paperless_deleted": paperless_deleted,
+            "paperless_errors": len(paperless_errors),
+        },
+    )
+
+    if scope == "untracked":
+        if paperless_errors:
+            messages.warning(
+                request,
+                f"{paperless_deleted} documentos no rastreados eliminados, pero "
+                f"{len(paperless_errors)} fallaron: {'; '.join(paperless_errors[:3])}",
+            )
+        else:
+            messages.success(
+                request,
+                f"Eliminados {paperless_deleted} documentos no rastreados de Paperless.",
+            )
+        return redirect("documents:list")
+
     if paperless_errors:
         messages.warning(
             request,
-            f"Registros Django eliminados ({deleted}), pero {len(paperless_errors)} "
-            f"originales de Paperless fallaron: {'; '.join(paperless_errors[:3])}",
+            f"Registros Django eliminados ({document_count}), pero "
+            f"{len(paperless_errors)} originales de Paperless fallaron: "
+            f"{'; '.join(paperless_errors[:3])}",
         )
     else:
         messages.success(
             request,
-            f"Eliminados {deleted} documentos de Django y "
+            f"Eliminados {document_count} documentos de Django y "
             f"{paperless_deleted} originales de Paperless.",
         )
     return redirect("documents:list")
@@ -204,20 +290,6 @@ def internal_extract(request, pk: int):
     return JsonResponse(payload)
 
 
-STATE_FILTERS = {
-    "pending": [Document.ProcessingState.PENDING_REVIEW.value],
-    "approved": [Document.ProcessingState.APPROVED.value],
-    "rejected": [Document.ProcessingState.REJECTED.value],
-    "error": [Document.ProcessingState.ERROR.value],
-    "processed": [
-        Document.ProcessingState.RECEIVED.value,
-        Document.ProcessingState.STORED.value,
-        Document.ProcessingState.TEXT_READY.value,
-        Document.ProcessingState.EXTRACTED.value,
-        Document.ProcessingState.CLASSIFIED.value,
-    ],
-}
-
 PAGE_SIZE = 25
 
 PROCESSING_STATES = [
@@ -227,61 +299,6 @@ PROCESSING_STATES = [
     Document.ProcessingState.EXTRACTED.value,
     Document.ProcessingState.CLASSIFIED.value,
 ]
-
-
-def _filter_documents(request):
-    queryset = Document.objects.select_related(
-        "certificate",
-        "certificate__language",
-        "certificate__entity",
-        "certificate__exam",
-        "uploaded_by",
-    ).order_by("-created_at")
-
-    state = request.GET.get("state", "")
-    if state in STATE_FILTERS:
-        queryset = queryset.filter(processing_state__in=STATE_FILTERS[state])
-
-    query = (request.GET.get("q") or "").strip()
-    if query:
-        queryset = queryset.filter(
-            Q(original_filename__icontains=query) | Q(certificate__student_name__icontains=query)
-        )
-
-    language = (request.GET.get("language") or "").strip()
-    if language:
-        queryset = queryset.filter(
-            Q(certificate__language_id=language)
-            | Q(certificate__language_literal__icontains=language)
-        )
-
-    entity = (request.GET.get("entity") or "").strip()
-    if entity:
-        queryset = queryset.filter(
-            Q(certificate__entity_id=entity) | Q(certificate__entity_literal__icontains=entity)
-        )
-
-    organism = (request.GET.get("organism") or "").strip()
-    if organism:
-        queryset = queryset.filter(certificate__issuing_body_literal__icontains=organism)
-
-    level = (request.GET.get("level") or "").strip()
-    if level:
-        queryset = queryset.filter(
-            Q(certificate__cefr_level__iexact=level)
-            | Q(certificate__level_literal__icontains=level)
-        )
-
-    issue_date_raw = (request.GET.get("issue_date") or "").strip()
-    if issue_date_raw:
-        try:
-            issue_date = date.fromisoformat(issue_date_raw)
-        except ValueError:
-            issue_date = None
-        if issue_date is not None:
-            queryset = queryset.filter(certificate__issue_date=issue_date)
-
-    return queryset
 
 
 def _attach_equivalence_info(certificates: list) -> None:
@@ -305,7 +322,7 @@ def _attach_equivalence_info(certificates: list) -> None:
 @role_required(ROLE_VIEWER)
 @require_http_methods(["GET"])
 def document_list(request):
-    queryset = _filter_documents(request)
+    queryset = filter_documents(request.GET)
     page = Paginator(queryset, PAGE_SIZE).get_page(request.GET.get("page"))
 
     certificates = [
@@ -339,7 +356,7 @@ def document_list(request):
 @require_http_methods(["GET"])
 def document_gallery(request):
     """Visual gallery of certificate images with catalog filters."""
-    queryset = _filter_documents(request).filter(certificate__isnull=False)
+    queryset = filter_documents(request.GET).filter(certificate__isnull=False)
     page = Paginator(queryset, 24).get_page(request.GET.get("page"))
     certificates = [
         document.certificate
@@ -374,9 +391,8 @@ def bulk_review(request):
         messages.error(request, "Seleccioná al menos un documento y una acción.")
         return redirect("documents:gallery")
 
-    documents = (
-        Document.objects.filter(pk__in=pks)
-        .select_related("certificate__language", "certificate__entity", "certificate__exam")
+    documents = Document.objects.filter(pk__in=pks).select_related(
+        "certificate__language", "certificate__entity", "certificate__exam"
     )
     succeeded = failed = 0
     errors: list[str] = []
@@ -467,19 +483,19 @@ def review_detail(request, pk: int):
 
     siblings = Document.objects.order_by("-created_at", "-id")
     previous_document = (
-        siblings.filter(created_at__gt=document.created_at)
-        .order_by("created_at", "id")
-        .first()
+        siblings.filter(created_at__gt=document.created_at).order_by("created_at", "id").first()
     )
     next_document = (
-        siblings.filter(created_at__lt=document.created_at)
-        .order_by("-created_at", "-id")
-        .first()
+        siblings.filter(created_at__lt=document.created_at).order_by("-created_at", "-id").first()
     )
 
     warnings: dict[str, str] = {}
+    reason_items: list[dict] = []
+    confidence = None
     if certificate is not None:
         reasons = list(certificate.review_reasons or []) + list(document.review_reasons or [])
+        reason_items = review_reason_items(reasons)
+        confidence = confidence_display(certificate.confidence)
         for reason in dict.fromkeys(reasons):
             mapped = FIELD_WARNINGS.get(reason)
             if mapped:
@@ -492,6 +508,8 @@ def review_detail(request, pk: int):
             "certificate": certificate,
             "form": form,
             "warnings": warnings,
+            "reason_items": reason_items,
+            "confidence": confidence,
             "paperless_url": _paperless_url(document),
             "can_review": can_review,
             "editing": editing,
@@ -625,6 +643,9 @@ def review_release_field(request, pk: int):
 @require_POST
 def review_reprocess(request, pk: int):
     document = get_object_or_404(Document, pk=pk)
+    if request.POST.get("confirm_reprocess") != "on":
+        messages.error(request, "Confirmá el reprocesamiento para continuar.")
+        return redirect("documents:detail", pk=document.pk)
     outcome = reprocess_document(document, request.user)
     if outcome.ok:
         messages.success(request, "Documento encolado para reprocesamiento.")
@@ -673,6 +694,24 @@ def document_original(request, pk: int):
     return response
 
 
+THUMBNAIL_CACHE_TIMEOUT = 60 * 60 * 24
+_THUMBNAIL_PLACEHOLDER_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" width="200" height="260">'
+    b'<rect width="200" height="260" fill="#e5e7eb"/>'
+    b'<rect x="45" y="45" width="110" height="140" rx="6" fill="#9ca3af"/>'
+    b'<text x="100" y="225" font-family="sans-serif" font-size="14" '
+    b'fill="#6b7280" text-anchor="middle">Sin vista previa</text>'
+    b"</svg>"
+)
+
+
+def _thumbnail_response(data: bytes, content_type: str) -> HttpResponse:
+    response = HttpResponse(data, content_type=content_type)
+    response["Content-Disposition"] = 'inline; filename="thumbnail"'
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 @login_required
 @role_required(ROLE_VIEWER)
 @require_http_methods(["GET"])
@@ -681,18 +720,22 @@ def document_thumbnail(request, pk: int):
     document = get_object_or_404(Document, pk=pk)
     if not document.paperless_document_id:
         raise Http404("El documento no tiene original en Paperless.")
+    cache_key = f"thumbnail:{document.paperless_document_id}:{document.updated_at.timestamp()}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return _thumbnail_response(cached["content"], cached.get("content_type") or "")
     store = build_document_store()
     try:
         data = store.download_thumbnail(document.paperless_document_id)
-    except PaperlessError as exc:
-        raise Http404("No se pudo descargar la miniatura.") from exc
-    content_type = (
-        magic.from_buffer(data, mime=True) or "application/octet-stream"
+    except PaperlessError:
+        return _thumbnail_response(_THUMBNAIL_PLACEHOLDER_SVG, "image/svg+xml")
+    content_type = magic.from_buffer(data, mime=True) or "application/octet-stream"
+    cache.set(
+        cache_key,
+        {"content": data, "content_type": content_type},
+        THUMBNAIL_CACHE_TIMEOUT,
     )
-    response = HttpResponse(data, content_type=content_type)
-    response["Content-Disposition"] = 'inline; filename="thumbnail"'
-    response["X-Content-Type-Options"] = "nosniff"
-    return response
+    return _thumbnail_response(data, content_type)
 
 
 @csrf_exempt

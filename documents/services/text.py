@@ -5,12 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 
-import magic
 from django.conf import settings
 from django.db import transaction
 from pypdf import PdfReader
 
 from documents.models import Certificate, Document, DocumentPage
+from documents.services.filetype import effective_name, sniffed_type
 from documents.services.labels import apply_manual_review_label
 from documents.services.ocr import (
     OcrClient,
@@ -24,29 +24,11 @@ from documents.services.paperless import (
     PaperlessError,
     build_document_store,
 )
+from documents.services.review_reasons import merge_review_reasons
+from documents.services.state import transition_document
 from documents.services.validation import EXTENSION_BY_TYPE as _EXTENSION_BY_TYPE
 
 _SNIFFED_TYPES = set(_EXTENSION_BY_TYPE) | {"image/x-ms-bmp"}
-
-
-def _sniffed_type(data: bytes) -> str:
-    """Detect the real payload type; Paperless may store image archives as PDF."""
-    try:
-        mime = magic.from_buffer(data[:4096], mime=True)
-    except Exception:
-        return ""
-    return mime if mime in _SNIFFED_TYPES else ""
-
-
-def _effective_name(filename: str, content_type: str) -> str:
-    from pathlib import Path
-
-    extension = _EXTENSION_BY_TYPE.get(content_type)
-    if extension is None:
-        return filename
-    stem = Path(filename or "document").stem
-    return f"{stem}{extension}"
-
 
 TEXT_REASON_CODES = {
     "insufficient_text",
@@ -102,11 +84,7 @@ def _method_for(pages: list[OcrPage]) -> str:
 
 
 def _reason_list(document: Document, reasons: list[str]) -> list[str]:
-    existing = [
-        reason for reason in (document.review_reasons or []) if reason not in TEXT_REASON_CODES
-    ]
-    merged = existing + [reason for reason in reasons if reason not in existing]
-    return list(dict.fromkeys(merged))
+    return merge_review_reasons(document.review_reasons, reasons, TEXT_REASON_CODES)
 
 
 def _save(
@@ -133,13 +111,12 @@ def _save(
                     },
                 )
             DocumentPage.objects.filter(document=document, page_number__gt=len(pages)).delete()
-            document.page_count = len(pages)
+        fields: dict = {"error_reason": error, "review_reasons": _reason_list(document, reasons)}
+        if pages is not None:
+            fields["page_count"] = len(pages)
         if text_method is not None:
-            document.text_method = text_method
-        document.processing_state = state
-        document.error_reason = error
-        document.review_reasons = _reason_list(document, reasons)
-        document.save()
+            fields["text_method"] = text_method
+        transition_document(document, state, fields=fields)
     return TextAcquisitionResult(
         document=document,
         page_count=document.page_count,
@@ -284,9 +261,11 @@ def acquire_text(
                     message=str(exc),
                 )
 
-        sniffed = _sniffed_type(data)
+        sniffed = sniffed_type(data, allowed_mimes=_SNIFFED_TYPES)
         effective_type = sniffed or document.content_type or "application/octet-stream"
-        effective_name = _effective_name(document.original_filename or "document", effective_type)
+        effective_name_ = effective_name(
+            document.original_filename or "document", effective_type, _EXTENSION_BY_TYPE
+        )
         is_pdf = effective_type == "application/pdf"
         app = settings.APP
         min_chars = int(app["ocr_min_text_chars"])
@@ -326,7 +305,7 @@ def acquire_text(
             try:
                 ocr_result = selected_ocr.extract(
                     data,
-                    effective_name,
+                    effective_name_,
                     effective_type,
                 )
             except OcrError as exc:
@@ -368,7 +347,7 @@ def acquire_text(
         try:
             ocr_result = selected_ocr.extract(
                 data,
-                effective_name,
+                effective_name_,
                 effective_type,
             )
         except OcrError as exc:
