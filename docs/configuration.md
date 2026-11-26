@@ -63,7 +63,7 @@ See `docs/extraction.md` and `docs/review.md`.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `APP_OLLAMA_URL` | `http://ollama:11434` | Ollama base URL. |
-| `APP_OLLAMA_MODEL` | `qwen2.5:7b-instruct` | Chat model used for extraction. |
+| `APP_OLLAMA_MODEL` | `qwen2.5:7b-instruct` | Chat model used for extraction. See `operations.md` → "Extraction model selection" for the comparison that justified this default. |
 | `APP_OLLAMA_TIMEOUT_SECONDS` | `180` | Extraction request timeout. |
 | `APP_OLLAMA_RETRIES` | `2` | Extraction retries. |
 | `APP_LLM_MAX_INPUT_CHARS` | `40000` | Page text cap sent to the model. |

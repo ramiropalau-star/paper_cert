@@ -100,6 +100,43 @@ unchanged.
 
 For a manual GPU deploy: `docker compose -f compose.yaml -f compose.gpu.yaml up -d`.
 
+#### Extraction model selection
+
+`APP_OLLAMA_MODEL` defaults to `qwen2.5:7b-instruct`. The choice was validated
+empirically (November 2026) by replaying the real extraction prompt — same
+system prompt, JSON schema, and page-evidence validation — over the 13
+certificates awaiting review, once per candidate model. Three metrics were
+recorded per document: wall-clock latency, extraction rejections caused by
+unverifiable evidence quotes, and field-level agreement with the stored
+extraction.
+
+| Model | Size | Avg. latency | Rejected extractions | Field agreement |
+| --- | --- | --- | --- | --- |
+| `qwen2.5:7b-instruct` (chosen) | 4.7 GB | ~22 s | 5/13 | 47/53 |
+| `qwen2.5:3b-instruct` | 1.9 GB | ~18 s | 10/13 | 7/20 |
+| `qwen2.5:1.5b-instruct` | 1.0 GB | ~10 s* | 4/13 | 30/62 |
+| `llama3.2:3b` | 2.0 GB | ~16 s | 8/13 | 17/32 |
+| `mistral:7b-instruct` | 4.4 GB | ~29 s | 11/13 | 5/13 |
+
+\* One document timed out at the 180 s transport limit.
+
+Smaller models fail mainly through hallucinated evidence quotes: the strict
+page-evidence validation rejects the whole extraction when a quoted string
+does not appear verbatim on the cited page, so weak models produce unusable
+output rather than merely imperfect fields. The 1.5B model was fastest but
+also returned plausible-looking invented values (e.g. scores absent from the
+document), which is worse than a rejection because it reaches the review
+queue looking valid. `mistral:7b-instruct` was both slower and less accurate
+than the incumbent. No tested alternative improved score/date capture on the
+hardest document in the corpus — a trilingual certificate layout that the
+7B model also only partially extracts — so the gap is document-specific, not
+a model-size issue.
+
+Conclusion: keep `qwen2.5:7b-instruct` on GPU (~20 s/document). If GPU is
+unavailable, `qwen2.5:3b-instruct` is the least-bad CPU fallback but expect
+roughly three quarters of documents to need manual re-extraction. Re-run the
+comparison before adopting any newer model (e.g. qwen3 or gemma3).
+
 The Paperless *Document Added* webhook is provisioned automatically: the
 `bootstrap` command attempts it (best-effort while Paperless is still
 booting) and the `watcher` service retries on startup and every sync cycle
