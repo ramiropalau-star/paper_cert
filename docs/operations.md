@@ -136,6 +136,25 @@ curl -s http://localhost:8080/internal/healthz -H "X-Internal-Token: $APP_INTERN
 Documents stuck in `error` can be retried from the review UI
 (**Reprocesar**) or by replaying the n8n execution.
 
+### User management
+
+The deploy bootstrap creates a single `admin` superuser. Additional users are
+managed from the app itself at `/users/` (visible only to the `admin` role):
+create accounts with one role (`viewer`, `reviewer`, or `admin`), edit roles,
+reset passwords, and activate/deactivate. Every signed-in user can change
+their own password from **Cambiar contraseña** in the nav, and the login page
+offers a password-reset flow.
+
+Password-reset emails use the console email backend by default — the message
+is printed to the `app` container logs (`docker compose logs -f app`). To
+deliver real email, set `APP_EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend`
+plus `APP_EMAIL_HOST`, `APP_EMAIL_PORT`, `APP_EMAIL_HOST_USER`,
+`APP_EMAIL_HOST_PASSWORD`, `APP_EMAIL_USE_TLS`, and `APP_DEFAULT_FROM_EMAIL`
+in `.env`. Reset links expire after one hour (`PASSWORD_RESET_TIMEOUT`).
+
+Django admin at `/admin/` remains available to superusers only; regular users
+(including the `admin` group) cannot open it — use `/users/` instead.
+
 ### Stuck-work recovery
 
 The `watcher` service runs recovery every `APP_RECOVERY_INTERVAL_SECONDS`

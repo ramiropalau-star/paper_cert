@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Usuarios{% endblock %}
+{% block content %}
+  <section class="panel">
+    <h1>Usuarios</h1>
+    <p><a class="button" href="{% url 'accounts:user_create' %}">Nuevo usuario</a></p>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Usuario</th>
+          <th>Roles</th>
+          <th>Estado</th>
+          <th>Último ingreso</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for user in users %}
+          <tr>
+            <td>{{ user.username }}{% if user == request.user %} <small>(vos)</small>{% endif %}{% if user.email %}<br><small class="muted">{{ user.email }}</small>{% endif %}</td>
+            <td>
+              {% for group in user.groups.all %}<span class="role-badge">{{ group.name }}</span>{% empty %}<span class="muted">—</span>{% endfor %}
+              {% if user.is_superuser %}<span class="role-badge">superuser</span>{% endif %}
+            </td>
+            <td>{% if user.is_active %}Activo{% else %}<span class="form-error">Inactivo</span>{% endif %}</td>
+            <td>{{ user.last_login|date:"Y-m-d H:i"|default:"Nunca" }}</td>
+            <td><a class="button" href="{% url 'accounts:user_edit' user.pk %}">Editar</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

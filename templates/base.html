@@ -15,7 +15,9 @@
         <a href="/documents/gallery/">Galería</a>
         <a href="/reports/">Reportes</a>
         <a href="/catalog/">Equivalencias</a>
+        {% if can_manage_users %}<a href="/users/">Usuarios</a>{% endif %}
         <span class="user">{{ user.get_username }}</span>
+        <a href="{% url 'password_change' %}">Cambiar contraseña</a>
         <form method="post" action="/accounts/logout/" class="inline-form">
           {% csrf_token %}
           <button type="submit" class="link-button">Cerrar sesión</button>

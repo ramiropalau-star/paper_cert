@@ -115,11 +115,7 @@ def test_single_file_over_per_file_limit_is_rejected(client):
     oversized = b"x" * (settings.APP["upload_max_bytes"] + 1)
     response = client.post(
         reverse("documents:upload"),
-        {
-            "document": SimpleUploadedFile(
-                "big.pdf", oversized, content_type="application/pdf"
-            )
-        },
+        {"document": SimpleUploadedFile("big.pdf", oversized, content_type="application/pdf")},
     )
 
     assert response.status_code == 302

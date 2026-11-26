@@ -86,6 +86,15 @@ def read_app_settings(environ: Mapping[str, str] | None = None) -> dict[str, obj
         "recovery_interval_seconds": env_float(source, "APP_RECOVERY_INTERVAL_SECONDS", 60.0),
         "recovery_stale_seconds": env_float(source, "APP_RECOVERY_STALE_SECONDS", 1800.0),
         "recovery_max_attempts": env_int(source, "APP_RECOVERY_MAX_ATTEMPTS", 3),
+        "email_backend": source.get(
+            "APP_EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
+        ),
+        "email_host": source.get("APP_EMAIL_HOST", ""),
+        "email_port": env_int(source, "APP_EMAIL_PORT", 587),
+        "email_host_user": source.get("APP_EMAIL_HOST_USER", ""),
+        "email_host_password": source.get("APP_EMAIL_HOST_PASSWORD", ""),
+        "email_use_tls": env_bool(source, "APP_EMAIL_USE_TLS", True),
+        "default_from_email": source.get("APP_DEFAULT_FROM_EMAIL", "webmaster@localhost"),
     }
 
 
@@ -115,6 +124,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "core",
+    "accounts",
     "catalog",
     "documents",
     "reports",
@@ -145,6 +155,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "core.context_processors.permissions",
             ],
         },
     },
@@ -180,6 +191,15 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
+
+EMAIL_BACKEND = APP["email_backend"]
+EMAIL_HOST = APP["email_host"]
+EMAIL_PORT = APP["email_port"]
+EMAIL_HOST_USER = APP["email_host_user"]
+EMAIL_HOST_PASSWORD = APP["email_host_password"]
+EMAIL_USE_TLS = APP["email_use_tls"]
+DEFAULT_FROM_EMAIL = APP["default_from_email"]
+PASSWORD_RESET_TIMEOUT = 3600
 
 LANGUAGE_CODE = "es"
 TIME_ZONE = "UTC"

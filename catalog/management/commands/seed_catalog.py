@@ -449,11 +449,19 @@ ENTITIES = [
         "exams": [
             ("CAPLE", "por"),
             ("CAPLE ACESSO", "por", ["ACESSO", "Certificado de Acesso ao Português"]),
-            ("CAPLE CIPLE", "por", ["CIPLE", "Certificado Inicial de Português Língua Estrangeira"]),
+            (
+                "CAPLE CIPLE",
+                "por",
+                ["CIPLE", "Certificado Inicial de Português Língua Estrangeira"],
+            ),
             ("CAPLE DEPLE", "por", ["DEPLE", "Diploma Elementar de Português Língua Estrangeira"]),
             ("CAPLE DIPLE", "por", ["DIPLE", "Diploma Intermédio de Português Língua Estrangeira"]),
             ("CAPLE DAPLE", "por", ["DAPLE", "Diploma Avançado de Português Língua Estrangeira"]),
-            ("CAPLE DUPLE", "por", ["DUPLE", "Diploma Universitário de Português Língua Estrangeira"]),
+            (
+                "CAPLE DUPLE",
+                "por",
+                ["DUPLE", "Diploma Universitário de Português Língua Estrangeira"],
+            ),
         ],
     },
     {
@@ -744,9 +752,7 @@ class Command(BaseCommand):
             entity_defaults: dict = {}
             if "date_order" in data:
                 entity_defaults["date_order"] = data["date_order"]
-            entity, _ = Entity.objects.update_or_create(
-                name=data["name"], defaults=entity_defaults
-            )
+            entity, _ = Entity.objects.update_or_create(name=data["name"], defaults=entity_defaults)
             for alias in data["aliases"]:
                 EntityAlias.objects.get_or_create(
                     normalized_alias=normalize_catalog_text(alias),

@@ -260,3 +260,21 @@ body {
 .lightbox-body iframe {
   flex: 1; width: 100%; border: 0; background: #eef1f4;
 }
+
+.muted { color: var(--muted); }
+.panel.narrow { max-width: 28rem; }
+.role-badge {
+  display: inline-block; margin-right: 0.3rem; padding: 0.1rem 0.5rem;
+  border-radius: 999px; background: #e8f0fe; color: #1d4ed8;
+  font-size: 0.8rem; font-weight: 600;
+}
+.role-option { display: inline-flex; align-items: center; gap: 0.35rem; margin-right: 1rem; }
+.panel form p label { display: block; font-size: 0.9rem; color: var(--muted); margin-bottom: 0.2rem; }
+.panel form input[type="text"],
+.panel form input[type="password"],
+.panel form input[type="email"] {
+  width: 100%; max-width: 24rem; padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border); border-radius: 6px; font: inherit;
+}
+.panel fieldset { border: 1px solid var(--border); border-radius: 6px; margin: 0.75rem 0; }
+.panel fieldset legend { font-size: 0.9rem; color: var(--muted); padding: 0 0.4rem; }
