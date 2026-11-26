@@ -744,6 +744,20 @@ def document_thumbnail(request, pk: int):
     return _thumbnail_response(data, content_type)
 
 
+@login_required
+@role_required(ROLE_VIEWER)
+@require_http_methods(["GET"])
+def document_status(request, pk: int):
+    """Lightweight JSON poll target for the review detail auto-refresh."""
+    document = get_object_or_404(Document, pk=pk)
+    return JsonResponse(
+        {
+            "state": document.processing_state,
+            "has_certificate": hasattr(document, "certificate"),
+        }
+    )
+
+
 @csrf_exempt
 @require_POST
 @internal_token_required

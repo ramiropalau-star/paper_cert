@@ -305,4 +305,25 @@
       {% endif %}
     </div>
   </div>
+  {% if not editing %}
+  <script>
+    (function () {
+      var initialState = "{{ document.processing_state }}";
+      var transient = ["received", "stored", "text_ready", "extracted", "classified"];
+      if (transient.indexOf(initialState) === -1) return;
+      var url = "{% url 'documents:status' document.pk %}";
+      var timer = setInterval(function () {
+        fetch(url, { headers: { "Accept": "application/json" } })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (data) {
+            if (data && data.state !== initialState) {
+              clearInterval(timer);
+              window.location.reload();
+            }
+          })
+          .catch(function () {});
+      }, 5000);
+    })();
+  </script>
+  {% endif %}
 {% endblock %}

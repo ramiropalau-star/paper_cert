@@ -27,7 +27,7 @@ from documents.services.state import transition_document
 
 logger = logging.getLogger("documents.extraction")
 
-PROMPT_VERSION = "extraction-v5"
+PROMPT_VERSION = "extraction-v6"
 MAX_INVALID_ATTEMPTS = 3
 
 EXTRACTION_REASON_CODES = {
@@ -80,8 +80,13 @@ Rules:
   - level: the certification level as printed (e.g. "B2", "Nivel Avanzado",
     "Zweite Stufe").
   - score: the overall/global result score only (e.g. "114", "179",
-    "68.00 / 100"). If the document only lists per-skill scores (reading,
-    writing, listening, speaking) with no overall score, return null.
+    "68.00 / 100", "80 /100"). The label varies by issuer: "Score",
+    "Overall Score", "Global Score", "Result", "Marks", "Grade",
+    "Puntuación", "Nota", "Calificación", "Qualificació Final",
+    "Nota final". If the document only lists per-skill scores (reading,
+    writing, listening, speaking) or a minimum passing threshold
+    (e.g. "minimum satisfactory level: 60") with no overall result,
+    return null.
   - certificate_code: the official certificate or validation number only.
     Never put exam names, levels, result statuses (e.g. "APTO"), or scores
     here.
@@ -93,7 +98,9 @@ Rules:
     award, or expedition date; "exam" to the exam or sitting date;
     "result" to the result publication date; "unknown" otherwise. NEVER
     include dates of birth, validity or expiry dates, or dates belonging
-    to unrelated documents. Only report real calendar dates: never
+    to unrelated documents. When the same date is printed in several
+    languages side by side (e.g. "18 Setembre 2026 · 18 Septiembre 2026 ·
+    18 September 2026"), report it once. Only report real calendar dates: never
     identifiers, reference numbers, certificate codes, signature IDs, or
     phone numbers. If a date appears only as month and year
     (e.g. "SEPTEMBER 2020"), still report it with role "unknown".

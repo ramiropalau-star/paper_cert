@@ -458,3 +458,36 @@ def test_catalog_pending_filter():
     content = response.content.decode()
     assert "pending.pdf" in content
     assert "done.pdf" not in content
+
+
+# --- auto-refresh status endpoint ---
+
+
+def test_document_status_endpoint():
+    client = Client()
+    client.force_login(make_user("view-status", ("viewer",)))
+    document = make_document(fingerprint="9" * 64, processing_state="text_ready")
+    make_certificate(document)
+
+    response = client.get(reverse("documents:status", args=[document.pk]))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["state"] == "text_ready"
+    assert data["has_certificate"] is True
+
+
+def test_detail_embeds_initial_state_for_poll_guard():
+    client = Client()
+    client.force_login(make_user("view-poll", ("reviewer",)))
+    processing = make_document(fingerprint="8" * 64, processing_state="stored")
+    settled = make_document(
+        fingerprint="7" * 64, processing_state="pending_review"
+    )
+
+    response = client.get(reverse("documents:detail", args=[processing.pk]))
+    assert 'initialState = "stored"'.encode() in response.content
+    assert b"/status/" in response.content
+
+    response = client.get(reverse("documents:detail", args=[settled.pk]))
+    assert 'initialState = "pending_review"'.encode() in response.content

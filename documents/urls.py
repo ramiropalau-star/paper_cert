@@ -20,6 +20,7 @@ urlpatterns = [
     path("<int:pk>/original/", views.document_original, name="original"),
     path("<int:pk>/thumbnail/", views.document_thumbnail, name="thumbnail"),
     path("<int:pk>/history/", views.review_history, name="history"),
+    path("<int:pk>/status/", views.document_status, name="status"),
     path("<int:pk>/delete/", views.delete, name="delete"),
     path("delete-all/", views.delete_all, name="delete_all"),
 ]
