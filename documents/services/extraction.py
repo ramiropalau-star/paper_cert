@@ -26,7 +26,7 @@ from documents.services.state import transition_document
 
 logger = logging.getLogger("documents.extraction")
 
-PROMPT_VERSION = "extraction-v3"
+PROMPT_VERSION = "extraction-v4"
 MAX_INVALID_ATTEMPTS = 3
 
 EXTRACTION_REASON_CODES = {
@@ -63,6 +63,11 @@ Rules:
 - Provide a confidence between 0 and 1 for each field and for the overall
   extraction.
 - Field guidance:
+  - student_name: the full name of the person certified. The label varies
+    by issuer: "Student Name", "Candidate Name", "Test Taker Name",
+    "Apprendie", "Nombre del estudiante", "Nom du candidat", "Name", or a
+    bare name printed next to the certificate title. Never the test
+    centre, invigilator, or signatory.
   - entity: the organization that awards or certifies the qualification
     (e.g. Cambridge English, France Éducation international, a ministry or
     exam board). Never a school, academy, or test centre.
