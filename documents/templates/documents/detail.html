@@ -125,7 +125,7 @@
               <tbody>
                 <tr id="f-student">
                   <th>Alumno</th>
-                  <td class="cell-view">{{ certificate.student_name|default:"—" }}{% if "student_name" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if warnings.fields %} <a class="warn" href="#datos">⚠ {{ warnings.fields }}</a>{% endif %}{% if not certificate.student_name or "student_name" in certificate.unverified_fields %}{% include "documents/_teach_alias.html" with alias_field="student_name" %}{% endif %}</td>
+                  <td class="cell-view">{{ certificate.student_name|default:"—" }}{% if "student_name" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if not certificate.student_name or "student_name" in certificate.unverified_fields %}{% include "documents/_teach_alias.html" with alias_field="student_name" %}{% endif %}</td>
                   <td class="cell-edit">{{ form.student_name }}</td>
                 </tr>
                 <tr id="f-language">
@@ -285,6 +285,7 @@
           </form>
 
           {% if warnings.document %}<p class="warn">⚠ {{ warnings.document }}</p>{% endif %}
+          {% if warnings.fields %}<p class="warn">⚠ <a href="#datos">{{ warnings.fields }}</a></p>{% endif %}
 
           {% if certificate.verification_status != "none" or can_review %}
             <h3>Verificación en origen</h3>
@@ -300,6 +301,20 @@
             {% endif %}
             {% if certificate.verification_evidence.auto_check %}
               <p class="muted">Chequeo automático: {{ certificate.verification_evidence.auto_check.detail }} ({{ certificate.verification_evidence.auto_check.checked_at|slice:":10" }})</p>
+              {% if certificate.verification_evidence.auto_check.evidence.url %}
+                <p class="muted">Consulta realizada: <code>{{ certificate.verification_evidence.auto_check.evidence.url }}</code></p>
+              {% endif %}
+              {% with pdf=certificate.verification_evidence.auto_check.evidence.pdf %}
+                {% if pdf %}
+                  <ul class="muted">
+                    {% if pdf.pages %}<li>Documento devuelto por el origen: {{ pdf.pages }} página{{ pdf.pages|pluralize }}</li>{% endif %}
+                    {% if pdf.title %}<li>Título: {{ pdf.title }}</li>{% endif %}
+                    {% if pdf.author %}<li>Autor/firma: {{ pdf.author }}</li>{% endif %}
+                    <li>Huella del PDF: <code>{{ pdf.sha256 }}</code></li>
+                    {% if pdf.code_found_in_document == False %}<li class="warn">El código consultado no aparece en el texto del documento devuelto</li>{% endif %}
+                  </ul>
+                {% endif %}
+              {% endwith %}
             {% endif %}
             {% if can_review %}
               <form method="post" action="{% url 'documents:verify_now' document.pk %}" class="inline-form">

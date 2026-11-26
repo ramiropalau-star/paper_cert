@@ -17,12 +17,15 @@ Unknown domains are never fetched (SSRF allowlist).
 
 from __future__ import annotations
 
+import hashlib
+import io
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import httpx
 from django.utils import timezone
+from pypdf import PdfReader
 
 from documents.models import Certificate
 from documents.services.verification import verification_url_host
@@ -112,9 +115,37 @@ def _uv_verify(certificate: Certificate) -> VerificationOutcome:
 
     is_pdf = response.content[:5] == b"%PDF-"
     evidence["is_pdf"] = is_pdf
-    if is_pdf:
-        return VerificationOutcome(True, "signed_pdf_returned", evidence)
-    return VerificationOutcome(False, "no_pdf_returned", evidence)
+    if not is_pdf:
+        return VerificationOutcome(False, "no_pdf_returned", evidence)
+
+    summary = _pdf_summary(response.content, code)
+    evidence["pdf"] = summary
+    return VerificationOutcome(True, "signed_pdf_returned", evidence)
+
+
+def _pdf_summary(content: bytes, code: str) -> dict[str, Any]:
+    """Extract displayable facts from the verified source document."""
+    summary: dict[str, Any] = {
+        "sha256": hashlib.sha256(content).hexdigest()[:16],
+        "bytes": len(content),
+    }
+    try:
+        reader = PdfReader(io.BytesIO(content))
+        summary["pages"] = len(reader.pages)
+        info = reader.metadata or {}
+        for key in ("Title", "Author", "Creator", "Producer"):
+            value = info.get(f"/{key}") or info.get(key)
+            if value:
+                summary[key.lower()] = str(value)[:200]
+        # Confirm the returned document actually carries the queried code.
+        if code:
+            text = ""
+            for page in reader.pages[:3]:
+                text += (page.extract_text() or "") + "\n"
+            summary["code_found_in_document"] = code in text
+    except Exception as exc:
+        summary["parse_error"] = str(exc)[:200]
+    return summary
 
 
 Verifier = Callable[[Certificate], VerificationOutcome]
