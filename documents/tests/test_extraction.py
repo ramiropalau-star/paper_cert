@@ -14,6 +14,7 @@ from documents.services.extraction import (
     PROMPT_VERSION,
     SYSTEM_PROMPT,
     ExtractionPayload,
+    _validate_evidence,
     build_messages,
     document_text,
     extract_certificate,
@@ -590,3 +591,84 @@ def test_repair_exhaustion_routes_to_review_with_invalid_extraction():
     document.refresh_from_db()
     assert "invalid_extraction" in document.review_reasons
     assert Certificate.objects.filter(document=document).count() == 0
+
+
+def test_invalid_date_evidence_is_dropped_not_fatal():
+    payload = ExtractionPayload.model_validate(
+        payload_dict(
+            dates=[
+                {
+                    "text": "12 May 2024",
+                    "role": "issue",
+                    "page": 1,
+                    "quote": "issued 12 May 2024",
+                },
+                {
+                    "text": "bogus",
+                    "role": "unknown",
+                    "page": 1,
+                    "quote": "not on this page",
+                },
+            ]
+        )
+    )
+
+    _validate_evidence(payload, {1: PAGE_TEXT})
+
+    assert len(payload.dates) == 1
+    assert payload.dates[0].text == "12 May 2024"
+
+
+def test_invalid_literal_evidence_still_fails():
+    payload = ExtractionPayload.model_validate(
+        payload_dict(student_name=field("Ada Lovelace", quote="missing quote"))
+    )
+
+    with pytest.raises(ValueError, match="student_name"):
+        _validate_evidence(payload, {1: PAGE_TEXT})
+
+
+def test_empty_student_name_uses_label_fallback():
+    document = make_document()
+    add_page(
+        document,
+        1,
+        "CERTIFICATE OF ENGLISH\n"
+        "Obtingut per · Obtenido por · Obtained by\n"
+        "Ariadna Vidal García\n"
+        "quote",
+    )
+    data = payload_dict(
+        student_name={"value": None, "evidence": None, "confidence": None},
+        dates=[],
+    )
+    llm = FakeLlm([json.dumps(data)])
+
+    result = extract_certificate(document, llm=llm, store=FakeStore())
+
+    assert result.state == Document.ProcessingState.EXTRACTED
+    certificate = Certificate.objects.get(document=document)
+    assert certificate.student_name == "Ariadna Vidal García"
+    assert certificate.evidence["student_name"]["quote"] == "Ariadna Vidal García"
+
+
+def test_student_name_fallback_rejects_boilerplate():
+    document = make_document()
+    add_page(
+        document,
+        1,
+        "Obtained by\n"
+        "CERTIFICATE OF ENGLISH ASSESSMENT\n"
+        "quote",
+    )
+    data = payload_dict(
+        student_name={"value": None, "evidence": None, "confidence": None},
+        dates=[],
+    )
+    llm = FakeLlm([json.dumps(data)])
+
+    result = extract_certificate(document, llm=llm, store=FakeStore())
+
+    assert result.state == Document.ProcessingState.EXTRACTED
+    certificate = Certificate.objects.get(document=document)
+    assert certificate.student_name == ""

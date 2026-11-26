@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -26,7 +27,7 @@ from documents.services.state import transition_document
 
 logger = logging.getLogger("documents.extraction")
 
-PROMPT_VERSION = "extraction-v4"
+PROMPT_VERSION = "extraction-v5"
 MAX_INVALID_ATTEMPTS = 3
 
 EXTRACTION_REASON_CODES = {
@@ -65,9 +66,10 @@ Rules:
 - Field guidance:
   - student_name: the full name of the person certified. The label varies
     by issuer: "Student Name", "Candidate Name", "Test Taker Name",
-    "Apprendie", "Nombre del estudiante", "Nom du candidat", "Name", or a
-    bare name printed next to the certificate title. Never the test
-    centre, invigilator, or signatory.
+    "Obtained by", "Obtenido por", "Obtingut per", "Apprendie",
+    "Nombre del estudiante", "Nom du candidat", "Name", or a bare name
+    printed next to the certificate title. Never the test centre,
+    invigilator, signatory, or issuing authority.
   - entity: the organization that awards or certifies the qualification
     (e.g. Cambridge English, France Éducation international, a ministry or
     exam board). Never a school, academy, or test centre.
@@ -91,7 +93,9 @@ Rules:
     award, or expedition date; "exam" to the exam or sitting date;
     "result" to the result publication date; "unknown" otherwise. NEVER
     include dates of birth, validity or expiry dates, or dates belonging
-    to unrelated documents. If a date appears only as month and year
+    to unrelated documents. Only report real calendar dates: never
+    identifiers, reference numbers, certificate codes, signature IDs, or
+    phone numbers. If a date appears only as month and year
     (e.g. "SEPTEMBER 2020"), still report it with role "unknown".
 - Set is_language_certificate to false when the document is not a language
   certificate (diplomas, invoices, letters, blank pages, etc.).
@@ -356,7 +360,12 @@ def _quote_in_page(quote: str, page_text: str) -> bool:
 
 
 def _validate_evidence(payload: ExtractionPayload, page_texts: dict[int, str]) -> None:
-    """Reject output whose evidence quotes do not appear on the cited page."""
+    """Reject output whose evidence quotes do not appear on the cited page.
+
+    Literal fields stay strict: a bad quote means the model invented data.
+    Date candidates are auxiliary — an unverifiable quote drops just that
+    candidate instead of failing the whole extraction.
+    """
     for name in LITERAL_FIELDS:
         field = getattr(payload, name)
         if field.evidence is None:
@@ -364,18 +373,126 @@ def _validate_evidence(payload: ExtractionPayload, page_texts: dict[int, str]) -
         page_text = page_texts.get(field.evidence.page)
         if page_text is None or not _quote_in_page(field.evidence.quote, page_text):
             raise ValueError(f"evidence quote for '{name}' not found on page {field.evidence.page}")
+    kept: list[DateCandidate] = []
     for index, candidate in enumerate(payload.dates):
         if candidate.page is None or candidate.quote is None:
+            kept.append(candidate)
             continue
         page_text = page_texts.get(candidate.page)
-        if page_text is None or not _quote_in_page(candidate.quote, page_text):
-            raise ValueError(
-                f"evidence quote for dates[{index}] not found on page {candidate.page}"
+        if page_text is not None and _quote_in_page(candidate.quote, page_text):
+            kept.append(candidate)
+        else:
+            logger.info(
+                "extraction_date_evidence_dropped",
+                extra={"outcome": "dropped", "index": index},
             )
+    payload.dates = kept
 
 
 def _page_texts(document: Document) -> dict[int, str]:
     return {page.page_number: page.text for page in document.pages.all()}
+
+
+_NAME_LABELS = (
+    "obtenido por",
+    "obtingut per",
+    "obtained by",
+    "student name",
+    "candidate name",
+    "test taker name",
+    "nombre del estudiante",
+    "nombre del alumno",
+    "nom de l'alumne",
+    "nom i cognoms",
+    "nom et prénom",
+    "nom du candidat",
+    "apprendie",
+    "apprentice",
+)
+
+_NAME_STOPWORDS = (
+    "certificat",
+    "certificate",
+    "score",
+    "nivell",
+    "level",
+    "qualificaci",
+    "calificaci",
+    "obtingut",
+    "obtenido",
+    "obtained",
+    "data",
+    "date",
+    "ref",
+    "url",
+    "verif",
+    "firma",
+    "universitat",
+    "university",
+    "oxford",
+    "cambridge",
+    "go.",
+    "www.",
+    "http",
+)
+
+_NAME_WORD_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ'’\-]+$")
+
+
+def _looks_like_person_name(line: str) -> bool:
+    """Conservative check: 2-5 alphabetic words, no digits or boilerplate."""
+    words = line.split()
+    if not 2 <= len(words) <= 5 or len(line) > 60:
+        return False
+    if any(ch.isdigit() for ch in line):
+        return False
+    folded = _norm_text(line)
+    if any(stop in folded for stop in _NAME_STOPWORDS):
+        return False
+    return all(_NAME_WORD_RE.match(word.strip(".,;:()·")) for word in words)
+
+
+def _fallback_student_name(page_texts: dict[int, str]) -> FieldValue | None:
+    """Find the graduate name next to a known issuer label.
+
+    Used only when the model leaves ``student_name`` empty: some issuers
+    label the graduate "Obtained by" / "Obtenido por" / "Obtingut per"
+    and small models miss the mapping. The match must be a clean
+    person-name line, so headers and signature blocks are rejected.
+    """
+    for page_number in sorted(page_texts):
+        lines = page_texts[page_number].splitlines()
+        for index, line in enumerate(lines):
+            folded = _norm_text(line)
+            if not any(label in folded for label in _NAME_LABELS):
+                continue
+            candidates = []
+            for label in _NAME_LABELS:
+                pos = folded.find(label)
+                if pos >= 0:
+                    tail = line[pos + len(label) :]
+                    candidates.append(tail)
+                    break
+            for tail in candidates:
+                tail = tail.strip(" \t·:;,-–—")
+                if _looks_like_person_name(tail):
+                    return FieldValue(
+                        value=tail,
+                        evidence=FieldEvidence(page=page_number, quote=line.strip()),
+                        confidence=0.6,
+                    )
+            for follow in lines[index + 1 : index + 4]:
+                follow = follow.strip()
+                if not follow:
+                    continue
+                if _looks_like_person_name(follow):
+                    return FieldValue(
+                        value=follow,
+                        evidence=FieldEvidence(page=page_number, quote=follow),
+                        confidence=0.6,
+                    )
+                break
+    return None
 
 
 def _call_model(
@@ -482,6 +599,12 @@ def extract_certificate(
                 message=f"Model output failed validation: {exc}",
                 state=Document.ProcessingState.PENDING_REVIEW.value,
             )
+
+        page_texts = _page_texts(document)
+        if not (payload.student_name.value or "").strip():
+            fallback = _fallback_student_name(page_texts)
+            if fallback is not None:
+                payload.student_name = fallback
 
         with transaction.atomic():
             _persist_certificate(document, payload)
