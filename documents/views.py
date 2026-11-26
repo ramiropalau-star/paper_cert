@@ -11,6 +11,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
 from django.core.paginator import Paginator
 from django.db import transaction
+from django.db.models import BooleanField, Case, Value, When
 from django.utils import timezone
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -18,7 +19,7 @@ from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods, require_POST
 
-from catalog.models import Entity, Equivalence, Exam, Language
+from catalog.models import Entity, Equivalence, Exam, FormatProfile, Language
 from core.internal import internal_token_required
 from core.permissions import (
     ROLE_ADMIN,
@@ -28,7 +29,7 @@ from core.permissions import (
     can_review_documents,
     role_required,
 )
-from documents.filters import filter_documents
+from documents.filters import doubtful_format_q, filter_documents
 from documents.forms import CertificateEditForm
 from documents.models import Certificate, Document, FieldLabelAlias, ReviewEvent
 from documents.review_display import confidence_display, review_reason_items
@@ -40,6 +41,8 @@ from documents.services.classification import (
 )
 from documents.services.extraction import extract_certificate
 from documents.services.field_aliases import teach_alias as teach_field_alias
+from documents.services.format_profile import rescore_entity_year
+from documents.services.verifiers import verify_at_source
 from documents.services.intake import process_upload
 from documents.services.paperless import PaperlessError, build_document_store
 from documents.services.review import (
@@ -331,7 +334,13 @@ def _attach_equivalence_info(certificates: list) -> None:
 @role_required(ROLE_VIEWER)
 @require_http_methods(["GET"])
 def document_list(request):
-    queryset = filter_documents(request.GET)
+    queryset = filter_documents(request.GET).annotate(
+        format_doubtful=Case(
+            When(doubtful_format_q(), then=Value(True)),
+            default=Value(False),
+            output_field=BooleanField(),
+        )
+    )
     page = Paginator(queryset, PAGE_SIZE).get_page(request.GET.get("page"))
 
     certificates = [
@@ -355,6 +364,10 @@ def document_list(request):
             "catalog": request.GET.get("catalog", ""),
             "unverified": request.GET.get("unverified", ""),
             "verification": request.GET.get("verification", ""),
+            "format": request.GET.get("format", ""),
+            "format_threshold": float(
+                settings.APP.get("format_score_threshold", 0.4)
+            ),
             "verification_choices": Certificate.VerificationStatus.choices,
             "languages": Language.objects.filter(is_active=True),
             "entities": Entity.objects.filter(is_active=True),
@@ -770,6 +783,95 @@ def review_verify_source(request, pk: int):
         )
     messages.success(request, "Verificación en origen actualizada.")
     return redirect("documents:detail", pk=document.pk)
+
+
+@login_required
+@role_required(ROLE_REVIEWER)
+@require_POST
+def review_verify_now(request, pk: int):
+    """Run the automated source check on demand for this certificate."""
+    document = get_object_or_404(Document, pk=pk)
+    certificate = getattr(document, "certificate", None)
+    if certificate is None:
+        messages.error(request, "El documento no tiene certificado.")
+        return redirect("documents:detail", pk=document.pk)
+    if not certificate.verification_url:
+        messages.error(
+            request, "Sin URL de verificación; confirma manualmente en el portal."
+        )
+        return redirect("documents:detail", pk=document.pk)
+
+    before = certificate.verification_status
+    verify_at_source(certificate)
+    certificate.refresh_from_db()
+    auto = (certificate.verification_evidence or {}).get("auto_check") or {}
+    if certificate.verification_status == Certificate.VerificationStatus.VERIFIED_AT_SOURCE:
+        messages.success(request, "Verificado en origen automáticamente.")
+    elif auto.get("detail") == "missing_document_id":
+        messages.error(
+            request,
+            "Falta el identificador del documento; re-extrae o confirma manualmente.",
+        )
+    elif auto:
+        messages.error(
+            request,
+            f"El origen no confirmó el documento ({auto.get('detail', 'sin detalle')}).",
+        )
+    elif before == certificate.verification_status:
+        messages.error(
+            request, "Este emisor no tiene verificador automático; confirma manualmente."
+        )
+    return redirect("documents:detail", pk=document.pk)
+
+
+@login_required
+@role_required(ROLE_REVIEWER)
+@require_http_methods(["GET", "POST"])
+def format_profile_list(request):
+    """Inspect, deactivate/reactivate and rescore learned format profiles."""
+    if request.method == "POST":
+        action = request.POST.get("action", "")
+        profile = get_object_or_404(
+            FormatProfile.objects.select_related("entity", "exam"),
+            pk=request.POST.get("profile_id"),
+        )
+        if action in {"deactivate", "activate"}:
+            profile.is_active = action == "activate"
+            if profile.is_active:
+                profile.deactivated_by = None
+                profile.deactivated_at = None
+            else:
+                profile.deactivated_by = request.user
+                profile.deactivated_at = timezone.now()
+            profile.save(
+                update_fields=[
+                    "is_active",
+                    "deactivated_by",
+                    "deactivated_at",
+                    "updated_at",
+                ]
+            )
+            messages.success(request, "Perfil de formato actualizado.")
+        elif action == "rescore":
+            count = rescore_entity_year(
+                profile.entity_id, profile.year, profile.exam_id
+            )
+            messages.success(
+                request, f"Se reprocesaron {count} certificados de la cohorte."
+            )
+        else:
+            messages.error(request, "Acción inválida.")
+        return redirect("documents:format_profiles")
+
+    profiles = (
+        FormatProfile.objects.select_related("entity", "exam", "deactivated_by")
+        .order_by("entity__name", "-year", "exam__name")
+    )
+    return render(
+        request,
+        "documents/format_profiles.html",
+        {"profiles": profiles, "can_manage": True},
+    )
 
 
 @login_required

@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import F, Q
@@ -218,6 +219,15 @@ class FormatProfile(TimestampedModel):
     year = models.PositiveIntegerField()
     anchors = models.JSONField(default=list, blank=True)
     sample_count = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    deactivated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="deactivated_format_profiles",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    deactivated_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["entity__name", "year"]

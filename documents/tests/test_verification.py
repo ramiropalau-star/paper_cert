@@ -63,10 +63,11 @@ def test_harvest_gva_csv():
     assert artifacts.url.startswith("https://www.tramita.gva.es/csv-front/")
 
 
-def test_harvest_uv_code_and_url():
+def test_harvest_uv_code_url_and_document_id():
     artifacts = harvest_verification({1: UV_TEXT})
     assert artifacts.code == "H480BGXM95JWD2R2"
     assert artifacts.url == "https://seu.uv.es/"
+    assert artifacts.evidence["document_id"] == "UV-REDFirma-4751635"
 
 
 def test_harvest_cambridge_verification_number():
@@ -125,23 +126,13 @@ def test_verify_at_source_unknown_domain_untouched():
 def test_verify_at_source_success_marker(monkeypatch):
     class FakeResponse:
         status_code = 200
+        headers = {"content-type": "text/html"}
+        content = "El documento s'ha verificat correctament".encode()
         text = "El documento s'ha verificat correctament"
 
-    class FakeClient:
-        def __init__(self, **kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            return False
-
-        def get(self, url):
-            return FakeResponse()
-
     monkeypatch.setattr(
-        "documents.services.verifiers.httpx.Client", FakeClient
+        "documents.services.verifiers.httpx.Client",
+        _fake_httpx_client(FakeResponse()),
     )
     certificate = make_certificate(
         verification_url="https://www.tramita.gva.es/csv-front/index.faces?cadena=X",
@@ -158,8 +149,26 @@ def test_verify_at_source_success_marker(monkeypatch):
 def test_verify_at_source_no_marker_stays_self_reported(monkeypatch):
     class FakeResponse:
         status_code = 200
+        headers = {"content-type": "text/html"}
+        content = b"<html>form shell with captcha</html>"
         text = "<html>form shell with captcha</html>"
 
+    monkeypatch.setattr(
+        "documents.services.verifiers.httpx.Client",
+        _fake_httpx_client(FakeResponse()),
+    )
+    certificate = make_certificate(
+        verification_url="https://www.tramita.gva.es/csv-front/index.faces?cadena=X",
+        verification_code="X",
+        verification_status="self_reported",
+    )
+    verify_at_source(certificate)
+    certificate.refresh_from_db()
+    assert certificate.verification_status == "self_reported"
+    assert certificate.verification_evidence["auto_check"]["ok"] is False
+
+
+def _fake_httpx_client(response):
     class FakeClient:
         def __init__(self, **kwargs):
             pass
@@ -171,20 +180,72 @@ def test_verify_at_source_no_marker_stays_self_reported(monkeypatch):
             return False
 
         def get(self, url):
-            return FakeResponse()
+            FakeClient.requested_url = url
+            return response
+
+    return FakeClient
+
+
+def test_uv_verify_success_returns_pdf(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/pdf"}
+        content = b"%PDF-1.7 fake signed document"
+        text = ""
 
     monkeypatch.setattr(
-        "documents.services.verifiers.httpx.Client", FakeClient
+        "documents.services.verifiers.httpx.Client",
+        _fake_httpx_client(FakeResponse()),
     )
     certificate = make_certificate(
-        verification_url="https://www.tramita.gva.es/csv-front/index.faces?cadena=X",
-        verification_code="X",
+        verification_url="https://seu.uv.es/",
+        verification_code="H480BGXM95JWD2R2",
+        verification_evidence={"document_id": "UV-REDFirma-4751635"},
+        verification_status="self_reported",
+    )
+    verify_at_source(certificate)
+    certificate.refresh_from_db()
+    assert certificate.verification_status == "verified_at_source"
+    auto = certificate.verification_evidence["auto_check"]
+    assert auto["ok"] is True and auto["detail"] == "signed_pdf_returned"
+    assert "identificador=UV-REDFirma-4751635" in auto["evidence"]["url"]
+
+
+def test_uv_verify_html_response_not_verified(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        content = b"<html>login page</html>"
+        text = "<html>login page</html>"
+
+    monkeypatch.setattr(
+        "documents.services.verifiers.httpx.Client",
+        _fake_httpx_client(FakeResponse()),
+    )
+    certificate = make_certificate(
+        verification_url="https://seu.uv.es/",
+        verification_code="BAD",
+        verification_evidence={"document_id": "UV-REDFirma-1"},
         verification_status="self_reported",
     )
     verify_at_source(certificate)
     certificate.refresh_from_db()
     assert certificate.verification_status == "self_reported"
-    assert certificate.verification_evidence["auto_check"]["ok"] is False
+
+
+def test_uv_verify_missing_document_id(monkeypatch):
+    certificate = make_certificate(
+        verification_url="https://seu.uv.es/",
+        verification_code="H480",
+        verification_status="self_reported",
+    )
+    verify_at_source(certificate)
+    certificate.refresh_from_db()
+    assert certificate.verification_status == "self_reported"
+    assert (
+        certificate.verification_evidence["auto_check"]["detail"]
+        == "missing_document_id"
+    )
 
 
 def test_verify_source_view_roles_and_audit(client):

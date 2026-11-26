@@ -302,6 +302,10 @@
               <p class="muted">Chequeo automático: {{ certificate.verification_evidence.auto_check.detail }} ({{ certificate.verification_evidence.auto_check.checked_at|slice:":10" }})</p>
             {% endif %}
             {% if can_review %}
+              <form method="post" action="{% url 'documents:verify_now' document.pk %}" class="inline-form">
+                {% csrf_token %}
+                <button type="submit" class="button">Verificar ahora</button>
+              </form>
               <form method="post" action="{% url 'documents:verify_source' document.pk %}" class="inline-form">
                 {% csrf_token %}
                 {% if certificate.verification_status == "manually_confirmed" %}
@@ -327,6 +331,7 @@
           <p>
             <a class="button" href="{% url 'documents:history' document.pk %}">Ver historial</a>
             {% if can_review %}<a class="button" href="{% url 'documents:field_aliases' %}">Aliases de campos</a>{% endif %}
+            {% if can_review %}<a class="button" href="{% url 'documents:format_profiles' %}">Perfiles de formato</a>{% endif %}
             {% if document.paperless_document_id %}
               <a class="button" href="{% url 'documents:original' document.pk %}" target="_blank" rel="noopener">Abrir original</a>
             {% endif %}

@@ -2,8 +2,10 @@
 
 from datetime import date
 
-from django.db.models import BooleanField, Case, Q, QuerySet, Value, When
+from django.conf import settings
+from django.db.models import BooleanField, Case, Exists, OuterRef, Q, QuerySet, Value, When
 
+from catalog.models import FormatProfile
 from documents.models import Certificate, Document
 
 
@@ -114,4 +116,28 @@ def filter_documents(params) -> QuerySet:
     if verification in Certificate.VerificationStatus.values:
         queryset = queryset.filter(certificate__verification_status=verification)
 
+    if (params.get("format") or "").strip() == "doubtful":
+        queryset = queryset.filter(doubtful_format_q())
+
     return queryset
+
+
+def doubtful_format_q() -> Q:
+    """Q matching documents whose format confidence is doubtful.
+
+    Doubtful = format_score below the configured threshold, or no score at
+    all while the certificate's entity has an active profile with enough
+    samples (a profile exists that could have scored it).
+    """
+    threshold = float(settings.APP.get("format_score_threshold", 0.4))
+    min_samples = int(settings.APP.get("format_min_samples", 2))
+    qualifying_profile = FormatProfile.objects.filter(
+        entity_id=OuterRef("certificate__entity_id"),
+        is_active=True,
+        sample_count__gte=min_samples,
+    )
+    return Q(certificate__format_score__lt=threshold) | (
+        Q(certificate__format_score__isnull=True)
+        & Q(certificate__entity_id__isnull=False)
+        & Exists(qualifying_profile)
+    )

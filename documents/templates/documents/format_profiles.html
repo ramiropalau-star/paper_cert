@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Perfiles de formato{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Perfiles de formato</h1>
+  <p class="muted">Firmas de layout aprendidas de certificados aprobados, por entidad/año/examen. Un perfil inactivo no puntúa en la clasificación hasta reactivarse y reprocesar la cohorte.</p>
+
+  <table class="data-table">
+    <thead>
+      <tr><th>Entidad</th><th>Año</th><th>Examen</th><th>Muestras</th><th>Anchors</th><th>Estado</th><th>Actualizado</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for profile in profiles %}
+      <tr>
+        <td>{{ profile.entity.name }}</td>
+        <td>{{ profile.year }}</td>
+        <td>{{ profile.exam.name|default:"Todos" }}</td>
+        <td>{{ profile.sample_count }}</td>
+        <td>
+          <details>
+            <summary>{{ profile.anchors|length }} anchors</summary>
+            <ul>
+              {% for anchor in profile.anchors %}
+                <li class="muted">{{ anchor.text }} <span class="muted">(df {{ anchor.df }})</span></li>
+              {% endfor %}
+            </ul>
+          </details>
+        </td>
+        <td>
+          {% if profile.is_active %}Activo{% else %}
+            <span class="muted">Inactivo</span>
+            {% if profile.deactivated_by %}<br><span class="muted">por {{ profile.deactivated_by.username }} el {{ profile.deactivated_at|date:"Y-m-d H:i" }}</span>{% endif %}
+          {% endif %}
+        </td>
+        <td class="muted">{{ profile.updated_at|date:"Y-m-d" }}</td>
+        <td>
+          {% if can_manage %}
+          <form method="post" class="inline-form">
+            {% csrf_token %}
+            <input type="hidden" name="profile_id" value="{{ profile.pk }}">
+            {% if profile.is_active %}
+              <input type="hidden" name="action" value="deactivate">
+              <button type="submit" class="link-button">Desactivar</button>
+            {% else %}
+              <input type="hidden" name="action" value="activate">
+              <button type="submit" class="link-button">Activar</button>
+            {% endif %}
+          </form>
+          <form method="post" class="inline-form">
+            {% csrf_token %}
+            <input type="hidden" name="profile_id" value="{{ profile.pk }}">
+            <input type="hidden" name="action" value="rescore">
+            <button type="submit" class="link-button">Reprocesar cohorte</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="8" class="muted">No hay perfiles de formato aprendidos todavía. Se crean al aprobar certificados.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p><a class="button" href="{% url 'documents:list' %}">Volver a documentos</a></p>
+</section>
+{% endblock %}

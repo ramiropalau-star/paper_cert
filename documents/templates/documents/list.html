@@ -70,6 +70,13 @@
           {% endfor %}
         </select>
       </p>
+      <p>
+        <label for="f-format">Formato</label>
+        <select id="f-format" name="format">
+          <option value="">Todos</option>
+          <option value="doubtful" {% if format == "doubtful" %}selected{% endif %}>Dudoso</option>
+        </select>
+      </p>
       <button type="submit" class="button">Filtrar</button>
       <a href="{% url 'documents:list' %}">Limpiar</a>
     </form>
@@ -125,7 +132,7 @@
       <tbody id="docs-tbody">
         {% for document in page %}
           {% with certificate=document.certificate %}
-          <tr>
+          <tr{% if document.format_doubtful %} class="row-format-warn" title="Confianza de formato baja o no evaluable"{% endif %}>
             <td class="col-preview">
               {% if document.paperless_document_id %}
                 <button type="button" class="icon-btn preview-btn"
@@ -137,6 +144,12 @@
             <td>
               <a href="{% url 'documents:detail' document.pk %}">{{ document.original_filename }}</a>
               {% if document.catalog_pending %}<span class="catalog-badge" title="Literales sin resolver en el catálogo">Catálogo pendiente</span>{% endif %}
+              {% if certificate.format_score is not None %}
+                <span class="format-badge band-{% if certificate.format_score < format_threshold %}low{% elif certificate.format_score < format_threshold|add:"0.15" %}medium{% else %}high{% endif %}"
+                      title="Confianza de formato {{ certificate.format_score|floatformat:2 }}{% if certificate.format_cohort %} · {{ certificate.format_cohort }}{% endif %}">Formato {{ certificate.format_score|floatformat:2 }}</span>
+              {% elif document.format_doubtful %}
+                <span class="format-badge band-low" title="Existe perfil de formato para la entidad pero no se pudo puntuar">Formato s/d</span>
+              {% endif %}
             </td>
             <td>{{ document.npa|default:"—" }}</td>
             {% if certificate %}

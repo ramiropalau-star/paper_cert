@@ -151,7 +151,7 @@ def _score_against(entity_id: int, lines: set[str], year: int | None, exam_id: i
     (score, cohort_label) or (None, "") when no profile has enough samples.
     """
     min_samples = _min_samples()
-    qs = FormatProfile.objects.filter(entity_id=entity_id)
+    qs = FormatProfile.objects.filter(entity_id=entity_id, is_active=True)
 
     if year is not None:
         year_qs = qs.filter(year=year)
@@ -214,7 +214,7 @@ def score_document_format(certificate: Certificate) -> tuple[float | None, str]:
 
     best_other: float | None = None
     other_entities = (
-        FormatProfile.objects.filter(entity_id__isnull=False)
+        FormatProfile.objects.filter(entity_id__isnull=False, is_active=True)
         .exclude(entity_id=certificate.entity_id)
         .values_list("entity_id", flat=True)
         .distinct()
@@ -226,3 +226,28 @@ def score_document_format(certificate: Certificate) -> tuple[float | None, str]:
     if best_other is not None and best_other > score + 0.2:
         score = min(score, _max_score())
     return score, cohort
+
+
+def rescore_entity_year(
+    entity_id: int, year: int, exam_id: int | None = None
+) -> int:
+    """Recompute format scores for certificates of an entity cohort.
+
+    Returns the number of certificates rescored. Used after a profile is
+    deactivated/reactivated so stored scores reflect active profiles.
+    """
+    certs = Certificate.objects.filter(entity_id=entity_id).select_related(
+        "document"
+    )
+    if exam_id is not None:
+        certs = certs.filter(exam_id=exam_id)
+    rescored = 0
+    for certificate in certs:
+        if certificate_year(certificate) != year:
+            continue
+        score, cohort = score_document_format(certificate)
+        certificate.format_score = score
+        certificate.format_cohort = cohort or ""
+        certificate.save(update_fields=["format_score", "format_cohort", "updated_at"])
+        rescored += 1
+    return rescored

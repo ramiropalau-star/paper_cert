@@ -143,16 +143,33 @@ def _find_url(page_texts: dict[int, str]) -> tuple[str, str]:
     return "", ""
 
 
+# Issuer document identifier printed next to the verification code
+# (e.g. UV "Id: UV-REDFirma-4751635" + "Cod. Verificació: ...").
+_DOC_ID_RE = re.compile(r"\bId:\s*(UV-[A-Za-z]+-[A-Za-z0-9]+)\b")
+
+
+def _find_document_id(page_texts: dict[int, str]) -> str:
+    for page_number in sorted(page_texts):
+        text = page_texts[page_number] or ""
+        match = _DOC_ID_RE.search(text)
+        if match:
+            return match.group(1)
+    return ""
+
+
 def harvest_verification(page_texts: dict[int, str]) -> VerificationArtifacts:
     """Extract verification code/URL from page texts (deterministic)."""
     code, code_line = _find_code(page_texts)
     url, url_line = _find_url(page_texts)
+    document_id = _find_document_id(page_texts)
     if not (code or url):
         return VerificationArtifacts()
     evidence = {
         "code_line": code_line or None,
         "url_line": url_line or None,
     }
+    if document_id:
+        evidence["document_id"] = document_id
     return VerificationArtifacts(code=code, url=url, evidence=evidence)
 
 
@@ -169,7 +186,11 @@ def apply_verification_artifacts(
     certificate.verification_url = artifacts.url
     evidence = dict(certificate.verification_evidence or {})
     if artifacts.evidence:
-        evidence["harvest"] = artifacts.evidence
+        harvest_evidence = dict(artifacts.evidence)
+        document_id = harvest_evidence.pop("document_id", None)
+        evidence["harvest"] = harvest_evidence
+        if document_id:
+            evidence["document_id"] = document_id
     certificate.verification_evidence = evidence
     if certificate.verification_status == Certificate.VerificationStatus.MANUALLY_CONFIRMED:
         pass
