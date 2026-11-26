@@ -775,3 +775,120 @@ def test_unverified_marks_excluded_for_manual_fields():
     certificate = Certificate.objects.get(document=document)
     assert certificate.student_name == "Manual Name"
     assert "student_name" not in certificate.unverified_fields
+
+
+def test_harvest_trilingual_date_block_dedupes_to_one_candidate():
+    document = make_document()
+    add_page(
+        document,
+        1,
+        "CERTIFICAT DE · CERTIFICADO DE · CERTIFICATE OF\n"
+        "80\n/100\n"
+        "18 Setembre 2026 \n· \n18 Septiembre 2026 \n· \n18 September 2026\n"
+        "Ref: 2161",
+    )
+    data = payload_dict(dates=[])
+    llm = FakeLlm([json.dumps(data)])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    certificate = Certificate.objects.get(document=document)
+    candidates = certificate.date_texts["candidates"]
+    assert len(candidates) == 1
+    assert candidates[0]["text"] == "18 Setembre 2026"
+    assert candidates[0]["role"] == "unknown"
+
+
+def test_harvest_skips_birth_dates_and_implausible_years():
+    document = make_document()
+    add_page(
+        document,
+        1,
+        "Date of birth: 03/04/1990\n"
+        "Born 1990-04-03\n"
+        "Issued 12/05/2024\n"
+        "0399\n",
+    )
+    data = payload_dict(dates=[])
+    llm = FakeLlm([json.dumps(data)])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    certificate = Certificate.objects.get(document=document)
+    texts = [c["text"] for c in certificate.date_texts["candidates"]]
+    assert "03/04/1990" not in texts
+    assert "1990-04-03" not in texts
+    assert "0399" not in texts
+    assert any("12/05/2024" in t for t in texts)
+
+
+def test_harvest_dedupes_against_model_candidates():
+    document = make_document()
+    add_page(document, 1, PAGE_TEXT)
+    llm = FakeLlm([json.dumps(payload_dict())])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    certificate = Certificate.objects.get(document=document)
+    dates = [
+        c["text"]
+        for c in certificate.date_texts["candidates"]
+        if "May 2024" in c["text"] or "2024" in c["text"]
+    ]
+    assert len(dates) == len(set(dates))
+
+
+def test_student_name_strips_leading_honorifics():
+    document = make_document()
+    add_page(document, 1, PAGE_TEXT)
+    data = payload_dict(student_name=field("Doña María González Pérez"))
+    llm = FakeLlm([json.dumps(data)])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    certificate = Certificate.objects.get(document=document)
+    assert certificate.student_name == "María González Pérez"
+    assert certificate.evidence["student_name"]["stripped_titles"] == ["Doña"]
+
+
+def test_student_name_strips_multilingual_titles():
+    for raw, expected in (
+        ("Mr. John Smith", "John Smith"),
+        ("Mme Claire Martin", "Claire Martin"),
+        ("Frau Anna Schmidt", "Anna Schmidt"),
+        ("Senhora Maria Silva", "Maria Silva"),
+        ("Senyora Anna Vidal", "Anna Vidal"),
+    ):
+        document = make_document(fingerprint=str(abs(hash(raw))))
+        add_page(document, 1, PAGE_TEXT)
+        data = payload_dict(student_name=field(raw))
+        llm = FakeLlm([json.dumps(data)])
+
+        extract_certificate(document, llm=llm, store=FakeStore())
+
+        certificate = Certificate.objects.get(document=document)
+        assert certificate.student_name == expected, raw
+
+
+def test_student_name_preserves_ambiguous_tokens():
+    document = make_document()
+    add_page(document, 1, PAGE_TEXT)
+    data = payload_dict(student_name=field("Don Pablo Rivera"))
+    llm = FakeLlm([json.dumps(data)])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    certificate = Certificate.objects.get(document=document)
+    assert certificate.student_name == "Don Pablo Rivera"
+
+
+def test_student_name_keeps_two_word_remainder():
+    document = make_document()
+    add_page(document, 1, PAGE_TEXT)
+    data = payload_dict(student_name=field("Doña María"))
+    llm = FakeLlm([json.dumps(data)])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    certificate = Certificate.objects.get(document=document)
+    assert certificate.student_name == "Doña María"

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Aliases de campos{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Aliases de campos</h1>
+  <p class="muted">Etiquetas impresas en los certificados que el extractor debe reconocer para cada campo. Un alias global aplica a todos los documentos; uno con entidad aplica solo a certificados de esa entidad (en re-extracción).</p>
+
+  {% if can_manage %}
+  <h3>Nuevo alias</h3>
+  <form method="post" class="inline-form">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="create">
+    <select name="field" required aria-label="Campo">
+      {% for value, label in field_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+    </select>
+    <input type="text" name="alias" placeholder="Etiqueta tal como aparece (ej. «Test Taker Name»)" required>
+    <select name="scope_entity" aria-label="Alcance">
+      <option value="">Global</option>
+      {% for entity in entities %}<option value="{{ entity.pk }}">{{ entity.name }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="button">Guardar</button>
+  </form>
+  {% endif %}
+
+  <table class="data-table">
+    <thead>
+      <tr><th>Campo</th><th>Alias</th><th>Alcance</th><th>Origen</th><th>Estado</th><th>Creado</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for alias in aliases %}
+      <tr>
+        <td>{{ alias.get_field_display }}</td>
+        <td>{{ alias.alias }}</td>
+        <td>{% if alias.scope_entity %}{{ alias.scope_entity.name }}{% else %}Global{% endif %}</td>
+        <td>{{ alias.get_source_display }}</td>
+        <td>{% if alias.is_active %}Activo{% else %}<span class="muted">Inactivo</span>{% endif %}</td>
+        <td class="muted">{{ alias.created_at|date:"Y-m-d" }}{% if alias.created_by %} · {{ alias.created_by.username }}{% endif %}</td>
+        <td>
+          {% if can_manage %}
+          <form method="post" class="inline-form">
+            {% csrf_token %}
+            <input type="hidden" name="alias_id" value="{{ alias.pk }}">
+            {% if alias.is_active %}
+              <input type="hidden" name="action" value="deactivate">
+              <button type="submit" class="link-button">Desactivar</button>
+            {% else %}
+              <input type="hidden" name="action" value="activate">
+              <button type="submit" class="link-button">Activar</button>
+            {% endif %}
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7" class="muted">No hay aliases configurados.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p><a class="button" href="{% url 'documents:list' %}">Volver a documentos</a></p>
+</section>
+{% endblock %}

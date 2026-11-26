@@ -299,6 +299,31 @@ def test_parse_date_text_ambiguous_day_month():
     assert parsed == date(2024, 6, 5)
 
 
+def test_parse_date_text_multilingual_month_names():
+    for text in (
+        "18 Setembre 2026",
+        "18 Septiembre 2026",
+        "18 September 2026",
+        "5 décembre 2020",
+        "3 März 2021",
+        "18 de setembro de 2026",
+        "7 aprile 2022",
+        "15 juin 2023",
+    ):
+        parsed, ambiguous = parse_date_text(text)
+        assert parsed is not None and not ambiguous, text
+    assert parse_date_text("18 Setembre 2026")[0] == date(2026, 9, 18)
+    assert parse_date_text("5 décembre 2020")[0] == date(2020, 12, 5)
+    assert parse_date_text("3 März 2021")[0] == date(2021, 3, 3)
+
+
+def test_parse_date_text_month_year_stays_ambiguous():
+    parsed, ambiguous = parse_date_text("SEPTIEMBRE 2020")
+    assert parsed is None and ambiguous is True
+    parsed, ambiguous = parse_date_text("Setembre 2026")
+    assert parsed is None and ambiguous is True
+
+
 def test_dates_assigned_to_distinct_fields_with_originals():
     document = make_document()
     certificate = make_certificate(

@@ -20,15 +20,24 @@ from django.db import transaction
 from pydantic import BaseModel, Field, ValidationError
 
 from documents.models import Certificate, Document
+from documents.services.classification import parse_date_text
+from documents.services.field_aliases import aliases_for_document
 from documents.services.labels import apply_manual_review_label
+from documents.services.months import (
+    DAY_MONTH_YEAR_RE,
+    MONTH_DAY_YEAR_RE,
+    MONTH_YEAR_RE,
+)
 from documents.services.ollama import OllamaClient, OllamaError, build_ollama_client
 from documents.services.paperless import DocumentStore
 from documents.services.review_reasons import merge_review_reasons
 from documents.services.state import transition_document
+from documents.services.verification import apply_verification_artifacts
+from documents.services.verifiers import verify_at_source
 
 logger = logging.getLogger("documents.extraction")
 
-PROMPT_VERSION = "extraction-v6"
+PROMPT_VERSION = "extraction-v9"
 MAX_INVALID_ATTEMPTS = 3
 
 EXTRACTION_REASON_CODES = {
@@ -65,7 +74,10 @@ Rules:
 - Provide a confidence between 0 and 1 for each field and for the overall
   extraction.
 - Field guidance:
-  - student_name: the full name of the person certified. The label varies
+  - student_name: the full name of the person certified, WITHOUT
+    honorifics or titles (strip "Doña", "Señora", "Mr.", "Mrs.", "Ms.",
+    "Mme", "Frau", "Herr", "Senhora", "Signora" and similar; return only
+    the person's name). The label varies
     by issuer: "Student Name", "Candidate Name", "Test Taker Name",
     "Obtained by", "Obtenido por", "Obtingut per", "Apprendie",
     "Nombre del estudiante", "Nom du candidat", "Name", or a bare name
@@ -99,7 +111,11 @@ Rules:
     award, or expedition date; "exam" to the exam or sitting date;
     "result" to the result publication date; "unknown" otherwise. NEVER
     include dates of birth, validity or expiry dates, or dates belonging
-    to unrelated documents. When the same date is printed in several
+    to unrelated documents. Month names may appear in any language present
+    in the document (e.g. "Setembre", "septiembre", "September",
+    "décembre", "März"); report the date once even if the month name is
+    not English. Dates printed beside the issuer signature block are
+    usually issue dates. When the same date is printed in several
     languages side by side (e.g. "18 Setembre 2026 · 18 Septiembre 2026 ·
     18 September 2026"), report it once. Only report real calendar dates: never
     identifiers, reference numbers, certificate codes, signature IDs, or
@@ -233,6 +249,40 @@ LITERAL_FIELDS = {
     "certificate_code": "certificate_code",
 }
 
+# Leading honorifics/titles stripped from student_name. Conservative on
+# purpose: ambiguous tokens that can be real given names or initials
+# ("Don", "D.", "M.", "Dr.") are deliberately absent.
+_NAME_TITLE_TOKENS = frozenset(
+    {
+        # Spanish / Catalan
+        "sr", "sra", "srta", "doña", "dña", "señor", "señora",
+        "senyor", "senyora",
+        # English
+        "mr", "mrs", "ms", "miss", "mx",
+        # French
+        "mme", "mlle",
+        # German
+        "herr", "frau",
+        # Portuguese
+        "senhor", "senhora",
+        # Italian
+        "signor", "signora",
+    }
+)
+
+
+def _title_token(word: str) -> str:
+    return word.strip(".,;:()·").casefold()
+
+
+def _strip_name_honorifics(value: str) -> tuple[str, list[str]]:
+    """Remove leading honorific tokens, keeping at least two name words."""
+    words = (value or "").split()
+    removed: list[str] = []
+    while len(words) > 2 and _title_token(words[0]) in _NAME_TITLE_TOKENS:
+        removed.append(words.pop(0))
+    return " ".join(words), removed
+
 
 @dataclass(frozen=True)
 class ExtractionResult:
@@ -252,13 +302,33 @@ def document_text(document: Document) -> str:
     return "\n\n".join(f"--- Page {page.page_number} ---\n{page.text}" for page in pages)
 
 
-def build_messages(text: str) -> list[dict[str, str]]:
+def _alias_hint_section(alias_map: dict[str, list[str]]) -> str:
+    """Render configured field-label aliases as extra prompt context."""
+    lines = []
+    for field, aliases in sorted(alias_map.items()):
+        if aliases:
+            lines.append(f"  - {field}: {', '.join(repr(a) for a in aliases)}")
+    if not lines:
+        return ""
+    return (
+        "Additional known labels for this document (configured aliases — "
+        "treat them as valid label variants for their field):\n"
+        + "\n".join(lines)
+        + "\n\n"
+    )
+
+
+def build_messages(
+    text: str, alias_map: dict[str, list[str]] | None = None
+) -> list[dict[str, str]]:
+    hint = _alias_hint_section(alias_map or {})
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
             "content": (
-                "Extract the certificate data from the following document "
+                hint
+                + "Extract the certificate data from the following document "
                 "text and answer with JSON matching the schema.\n\n"
                 "<document>\n"
                 f"{text}\n"
@@ -346,6 +416,11 @@ def _persist_certificate(
             }
         if field.confidence is not None:
             field_confidence[name] = field.confidence
+        if name == "student_name":
+            stripped, removed = _strip_name_honorifics(defaults[attribute])
+            if removed:
+                defaults[attribute] = stripped
+                evidence.setdefault(name, {})["stripped_titles"] = removed
     defaults["evidence"] = evidence
     defaults["field_confidence"] = field_confidence
 
@@ -479,7 +554,9 @@ def _looks_like_person_name(line: str) -> bool:
     return all(_NAME_WORD_RE.match(word.strip(".,;:()·")) for word in words)
 
 
-def _fallback_student_name(page_texts: dict[int, str]) -> FieldValue | None:
+def _fallback_student_name(
+    page_texts: dict[int, str], extra_labels: tuple[str, ...] = ()
+) -> FieldValue | None:
     """Find the graduate name next to a known issuer label.
 
     Used only when the model leaves ``student_name`` empty: some issuers
@@ -487,14 +564,17 @@ def _fallback_student_name(page_texts: dict[int, str]) -> FieldValue | None:
     and small models miss the mapping. The match must be a clean
     person-name line, so headers and signature blocks are rejected.
     """
+    labels = _NAME_LABELS + tuple(
+        _norm_text(alias) for alias in extra_labels if alias.strip()
+    )
     for page_number in sorted(page_texts):
         lines = page_texts[page_number].splitlines()
         for index, line in enumerate(lines):
             folded = _norm_text(line)
-            if not any(label in folded for label in _NAME_LABELS):
+            if not any(label in folded for label in labels):
                 continue
             candidates = []
-            for label in _NAME_LABELS:
+            for label in labels:
                 pos = folded.find(label)
                 if pos >= 0:
                     tail = line[pos + len(label) :]
@@ -529,8 +609,30 @@ _SCORE_LABEL_RE = re.compile(
     r"[^\d\n]{0,40}(\d{1,3}(?:[.,]\d{1,2})?)"
 )
 _ISSUE_DATE_LABEL_RE = re.compile(
-    r"(?i)(issue|exped|awarded?|date\s+of|data\s+d|emisi[oó]n|darrera?)"
+    r"(?i)(issue|exped|awarded?|date\s+of|data\s+d|emisi[oó]n|darrera?"
+    r"|expedici[oó]|emissi[oó]|fecha\s+de\s+expedici"
+    r"|data\s+d['’]emissio|data\s+de\s+emiss"
+    r"|relev[eé]|ausgestellt|rilascio|data\s+di\s+rilascio"
+    r"|issued|issue\s+date)"
 )
+_EXAM_DATE_LABEL_RE = re.compile(
+    r"(?i)(exam|sitting|exam\s+date|fecha\s+del\s+examen|data\s+de\s+l['’]examen"
+    r"|pr[uü]fungsdatum|session|convocatoria|date\s+of\s+exam)"
+)
+_RESULT_DATE_LABEL_RE = re.compile(
+    r"(?i)(result|resultado|r[eé]sultat|ergebnis|result\s+date|publication"
+    r"|publicaci[oó]|data\s+de\s+publicaci)"
+)
+_BIRTH_MARKER_RE = re.compile(
+    r"(?i)\b(birth|nacimiento|naixement|geburtsdatum|data\s+de\s+naixement"
+    r"|date\s+of\s+birth|n[eé]\s+le|nascita|born|dob)\b"
+)
+_HARVEST_NUMERIC_RES = (
+    re.compile(r"\b\d{4}-\d{2}-\d{2}\b"),
+    re.compile(r"\b\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}\b"),
+)
+_HARVEST_MAX_CANDIDATES = 20
+_HARVEST_LABEL_WINDOW = 80
 _DATE_VALUE_RE = re.compile(
     r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b"
     r"|\b\d{1,2}\s+[A-Za-zÀ-ÿ]{3,12}\.?,?\s+\d{4}\b"
@@ -546,10 +648,31 @@ def _line_for(text: str, start: int, end: int) -> str:
     return text[line_start:line_end].strip()
 
 
-def _fallback_score(page_texts: dict[int, str]) -> FieldValue | None:
+def _alias_fold(text: str) -> str:
+    """Accent-insensitive fold used only for alias label matching."""
+    folded = unicodedata.normalize("NFKD", text or "")
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    folded = folded.replace("‐", "-").replace("‑", "-").replace("‒", "-")
+    folded = folded.replace("–", "-").replace("—", "-").replace("−", "-")
+    folded = folded.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
+    return " ".join(folded.split()).casefold()
+
+
+def _fallback_score(
+    page_texts: dict[int, str], alias_labels: tuple[str, ...] = ()
+) -> FieldValue | None:
     """Recover an overall score the model missed (e.g. ``80 /100``)."""
+    alias_res = tuple(
+        re.compile(
+            re.escape(_alias_fold(alias))
+            + r"[^\d\n]{0,40}(\d{1,3}(?:[.,]\d{1,2})?)"
+        )
+        for alias in alias_labels
+        if alias.strip()
+    )
     for page_number in sorted(page_texts):
         text = page_texts[page_number]
+        folded_text = _alias_fold(text)
         for pattern in (_SCORE_OVER_RE, _SCORE_LABEL_RE):
             match = pattern.search(text)
             if match is None:
@@ -563,23 +686,70 @@ def _fallback_score(page_texts: dict[int, str]) -> FieldValue | None:
                 ),
                 confidence=0.5,
             )
+        for pattern in alias_res:
+            match = pattern.search(folded_text)
+            if match is None:
+                continue
+            value = " ".join(match.group(1).split())
+            return FieldValue(
+                value=value.strip(),
+                evidence=FieldEvidence(
+                    page=page_number,
+                    quote=_line_for(folded_text, match.start(), match.end()),
+                ),
+                confidence=0.5,
+            )
     return None
 
 
-def _fallback_issue_date(page_texts: dict[int, str]) -> DateCandidate | None:
+def _fallback_issue_date(
+    page_texts: dict[int, str], alias_labels: tuple[str, ...] = ()
+) -> DateCandidate | None:
     """Recover an issue date printed near an issue label."""
+    alias_res = [a for a in alias_labels if a.strip()]
+    alias_label_re = (
+        re.compile("|".join(re.escape(_alias_fold(a)) for a in alias_res))
+        if alias_res
+        else None
+    )
     for page_number in sorted(page_texts):
         text = page_texts[page_number]
         for label in _ISSUE_DATE_LABEL_RE.finditer(text):
+            label_line = _line_for(text, label.start(), label.end())
+            if _BIRTH_MARKER_RE.search(label_line):
+                continue
             window = text[label.end() : label.end() + 120]
             match = _DATE_VALUE_RE.search(window)
-            if match is not None:
+            if match is not None and not _BIRTH_MARKER_RE.search(
+                _line_for(text, label.end() + match.start(), label.end() + match.end())
+            ):
                 return DateCandidate(
                     text=match.group(0),
                     role="issue",
                     page=page_number,
                     quote=match.group(0),
                 )
+        if alias_label_re is not None:
+            folded_text = _alias_fold(text)
+            for label in alias_label_re.finditer(folded_text):
+                label_line = _line_for(folded_text, label.start(), label.end())
+                if _BIRTH_MARKER_RE.search(label_line):
+                    continue
+                window = folded_text[label.end() : label.end() + 120]
+                match = _DATE_VALUE_RE.search(window)
+                if match is not None and not _BIRTH_MARKER_RE.search(
+                    _line_for(
+                        folded_text,
+                        label.end() + match.start(),
+                        label.end() + match.end(),
+                    )
+                ):
+                    return DateCandidate(
+                        text=match.group(0),
+                        role="issue",
+                        page=page_number,
+                        quote=_line_for(folded_text, label.end() + match.start(), label.end() + match.end()),
+                    )
     return None
 
 
@@ -587,14 +757,89 @@ def _has_issue_date(payload: ExtractionPayload) -> bool:
     return any(candidate.role == "issue" for candidate in payload.dates)
 
 
-def build_focus_messages(text: str, missing: list[str]) -> list[dict[str, str]]:
+def _harvest_role(text: str, start: int) -> str:
+    """Guess a date role from labels in the ~80 chars before the match."""
+    window = text[max(0, start - _HARVEST_LABEL_WINDOW) : start]
+    for role, pattern in (
+        ("issue", _ISSUE_DATE_LABEL_RE),
+        ("exam", _EXAM_DATE_LABEL_RE),
+        ("result", _RESULT_DATE_LABEL_RE),
+    ):
+        if pattern.search(window):
+            return role
+    return "unknown"
+
+
+def _candidate_key(candidate: DateCandidate) -> tuple[str, str]:
+    parsed, _ambiguous = parse_date_text(candidate.text)
+    if parsed is not None:
+        return ("date", parsed.isoformat())
+    return ("text", _norm_text(candidate.text))
+
+
+def _harvest_dates(document: Document, payload: ExtractionPayload) -> list[DateCandidate]:
+    """Find date-like patterns the model missed, as ``unknown`` candidates.
+
+    Scans every page for numeric and multilingual month-name dates,
+    skipping birth-date lines and implausible years, deduplicating against
+    candidates the model already returned (by parsed date or normalized
+    text). Role is ``unknown`` unless a label nearby suggests otherwise.
+    """
+    page_texts = _page_texts(document)
+    seen = {_candidate_key(candidate) for candidate in payload.dates}
+    harvested: list[DateCandidate] = []
+    for page_number in sorted(page_texts):
+        text = page_texts[page_number]
+        matches: list[tuple[int, int, str]] = []
+        full_spans: list[tuple[int, int]] = []
+        for pattern in _HARVEST_NUMERIC_RES:
+            for m in pattern.finditer(text):
+                matches.append((m.start(), m.end(), m.group(0)))
+                full_spans.append((m.start(), m.end()))
+        for pattern in (DAY_MONTH_YEAR_RE, MONTH_DAY_YEAR_RE):
+            for m in pattern.finditer(text):
+                matches.append((m.start(), m.end(), m.group(0)))
+                full_spans.append((m.start(), m.end()))
+        for m in MONTH_YEAR_RE.finditer(text):
+            # Skip month-year fragments already covered by a full date.
+            if any(m.start() >= s and m.end() <= e for s, e in full_spans):
+                continue
+            matches.append((m.start(), m.end(), m.group(0)))
+        for start, end, value in sorted(matches):
+            if len(harvested) >= _HARVEST_MAX_CANDIDATES:
+                return harvested
+            line = _line_for(text, start, end)
+            if _BIRTH_MARKER_RE.search(line):
+                continue
+            parsed, _ambiguous = parse_date_text(value)
+            if parsed is not None and not (1900 <= parsed.year <= 2100):
+                continue
+            candidate = DateCandidate(
+                text=value.strip(" .,;"),
+                role=_harvest_role(text, start),  # type: ignore[arg-type]
+                page=page_number,
+                quote=line,
+            )
+            key = _candidate_key(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            harvested.append(candidate)
+    return harvested
+
+
+def build_focus_messages(
+    text: str, missing: list[str], alias_map: dict[str, list[str]] | None = None
+) -> list[dict[str, str]]:
     """Second-pass prompt asking only for fields the first pass missed."""
+    hint = _alias_hint_section(alias_map or {})
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
             "content": (
-                "A previous extraction of this certificate missed the following "
+                hint
+                + "A previous extraction of this certificate missed the following "
                 f"data: {', '.join(missing)}.\n"
                 "Search the document text again and return JSON matching the "
                 "schema with ONLY those fields filled (every other field null "
@@ -708,9 +953,15 @@ def extract_certificate(
                 state=Document.ProcessingState.PENDING_REVIEW.value,
             )
 
+        alias_map = aliases_for_document(document)
         selected_llm = selected_llm or build_ollama_client()
         try:
-            payload = _call_model(selected_llm, text, _page_texts(document))
+            payload = _call_model(
+                selected_llm,
+                text,
+                _page_texts(document),
+                messages=build_messages(text, alias_map),
+            )
         except OllamaError as exc:
             return _fail(
                 document,
@@ -731,20 +982,24 @@ def extract_certificate(
         unverified_names = _validate_evidence(payload, page_texts)
         unverified_attrs = {LITERAL_FIELDS[name] for name in unverified_names}
 
+        name_aliases = tuple(alias_map.get("student_name", ()))
+        score_aliases = tuple(alias_map.get("score", ()))
+        issue_aliases = tuple(alias_map.get("issue_date", ()))
+
         if not (payload.student_name.value or "").strip():
-            fallback = _fallback_student_name(page_texts)
+            fallback = _fallback_student_name(page_texts, name_aliases)
             if fallback is not None:
                 payload.student_name = fallback
                 unverified_attrs.add("student_name")
 
         if not (payload.score.value or "").strip():
-            fallback = _fallback_score(page_texts)
+            fallback = _fallback_score(page_texts, score_aliases)
             if fallback is not None:
                 payload.score = fallback
                 unverified_attrs.add("score_literal")
 
         if not _has_issue_date(payload):
-            fallback = _fallback_issue_date(page_texts)
+            fallback = _fallback_issue_date(page_texts, issue_aliases)
             if fallback is not None:
                 payload.dates.append(fallback)
                 unverified_attrs.add("issue_date")
@@ -760,7 +1015,7 @@ def extract_certificate(
                     selected_llm,
                     text,
                     page_texts,
-                    messages=build_focus_messages(text, missing),
+                    messages=build_focus_messages(text, missing, alias_map),
                 )
                 _merge_focus(payload, focused)
                 unverified_attrs |= {
@@ -773,8 +1028,11 @@ def extract_certificate(
                     extra={"outcome": "skipped", "error": str(exc)[:200]},
                 )
 
+        payload.dates.extend(_harvest_dates(document, payload))
+
         with transaction.atomic():
-            _persist_certificate(document, payload, unverified_attrs)
+            certificate = _persist_certificate(document, payload, unverified_attrs)
+            apply_verification_artifacts(certificate, page_texts)
             reasons: list[str] = []
             if not payload.is_language_certificate:
                 reasons.append("non_certificate")
@@ -788,6 +1046,16 @@ def extract_certificate(
         if state == Document.ProcessingState.PENDING_REVIEW.value:
             apply_manual_review_label(document, store=selected_store)
             document.refresh_from_db()
+
+        certificate = getattr(document, "certificate", None)
+        if certificate is not None:
+            try:
+                verify_at_source(certificate)
+            except Exception as exc:
+                logger.info(
+                    "verification_auto_check_failed",
+                    extra={"outcome": "skipped", "error": str(exc)[:200]},
+                )
 
         return ExtractionResult(
             document=document,

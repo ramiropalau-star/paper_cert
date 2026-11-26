@@ -4,7 +4,7 @@ from datetime import date
 
 from django.db.models import BooleanField, Case, Q, QuerySet, Value, When
 
-from documents.models import Document
+from documents.models import Certificate, Document
 
 
 def _unresolved(fk: str, literal: str) -> Q:
@@ -109,5 +109,9 @@ def filter_documents(params) -> QuerySet:
         queryset = queryset.filter(
             certificate__unverified_fields__isnull=False
         ).exclude(certificate__unverified_fields=[])
+
+    verification = (params.get("verification") or "").strip()
+    if verification in Certificate.VerificationStatus.values:
+        queryset = queryset.filter(certificate__verification_status=verification)
 
     return queryset

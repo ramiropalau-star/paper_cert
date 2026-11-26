@@ -16,3 +16,15 @@ def normalize_catalog_text(value: str) -> str:
         return ""
     normalized = unicodedata.normalize("NFKC", value).casefold()
     return _WHITESPACE.sub(" ", normalized).strip()
+
+
+def normalize_alias_text(value: str) -> str:
+    """Fold alias/label text for matching: NFKD, accent and typographic
+    dash/quote folding, casefold, whitespace collapse."""
+    if not value:
+        return ""
+    folded = unicodedata.normalize("NFKD", value)
+    folded = folded.replace("‐", "-").replace("‑", "-").replace("‒", "-")
+    folded = folded.replace("–", "-").replace("—", "-").replace("−", "-")
+    folded = folded.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
+    return _WHITESPACE.sub(" ", folded).strip().casefold()

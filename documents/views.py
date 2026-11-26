@@ -11,6 +11,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
 from django.core.paginator import Paginator
 from django.db import transaction
+from django.utils import timezone
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -29,7 +30,7 @@ from core.permissions import (
 )
 from documents.filters import filter_documents
 from documents.forms import CertificateEditForm
-from documents.models import Certificate, Document, ReviewEvent
+from documents.models import Certificate, Document, FieldLabelAlias, ReviewEvent
 from documents.review_display import confidence_display, review_reason_items
 from documents.services.catalog_resolution import unresolved_catalog_fields
 from documents.services.classification import (
@@ -38,6 +39,7 @@ from documents.services.classification import (
     matching_equivalence,
 )
 from documents.services.extraction import extract_certificate
+from documents.services.field_aliases import teach_alias as teach_field_alias
 from documents.services.intake import process_upload
 from documents.services.paperless import PaperlessError, build_document_store
 from documents.services.review import (
@@ -352,6 +354,8 @@ def document_list(request):
             "issue_date": request.GET.get("issue_date", ""),
             "catalog": request.GET.get("catalog", ""),
             "unverified": request.GET.get("unverified", ""),
+            "verification": request.GET.get("verification", ""),
+            "verification_choices": Certificate.VerificationStatus.choices,
             "languages": Language.objects.filter(is_active=True),
             "entities": Entity.objects.filter(is_active=True),
             "exams": Exam.objects.filter(is_active=True),
@@ -537,6 +541,7 @@ def review_detail(request, pk: int):
                 (field, FIELD_LABELS.get(field, field))
                 for field in (certificate.unverified_fields if certificate else [])
             ],
+            "reextract_diff": request.session.pop(f"reextract_diff_{document.pk}", None),
         },
     )
 
@@ -671,6 +676,143 @@ def review_reprocess(request, pk: int):
     return redirect("documents:detail", pk=document.pk)
 
 
+# Certificate attributes compared before/after a re-extract for the diff.
+REEXTRACT_DIFF_FIELDS = (
+    "student_name",
+    "language_literal",
+    "entity_literal",
+    "issuing_body_literal",
+    "test_center_literal",
+    "exam_literal",
+    "level_literal",
+    "score_literal",
+    "certificate_code",
+    "issue_date",
+    "exam_date",
+    "result_date",
+    "detected_date",
+)
+
+
+@login_required
+@role_required(ROLE_REVIEWER)
+@require_POST
+def review_teach_alias(request, pk: int):
+    """Teach a field-label alias from the review screen, then offer re-extract."""
+    document = get_object_or_404(Document, pk=pk)
+    certificate = getattr(document, "certificate", None)
+    field = request.POST.get("field", "")
+    alias = request.POST.get("alias", "")
+    scope_entity = None
+    if request.POST.get("scope") == "entity" and certificate is not None:
+        scope_entity = certificate.entity
+    created, message = teach_field_alias(
+        field=field, alias=alias, actor=request.user, scope_entity=scope_entity
+    )
+    if created is None:
+        messages.error(request, message)
+    else:
+        messages.success(
+            request,
+            f"{message} Para probarlo, usá «Re-extraer» en este documento.",
+        )
+    return redirect("documents:detail", pk=document.pk)
+
+
+@login_required
+@role_required(ROLE_REVIEWER)
+@require_POST
+def review_verify_source(request, pk: int):
+    """Confirm or unconfirm source verification after checking the issuer portal."""
+    document = get_object_or_404(Document, pk=pk)
+    certificate = getattr(document, "certificate", None)
+    if certificate is None:
+        messages.error(request, "El documento no tiene certificado.")
+        return redirect("documents:detail", pk=document.pk)
+
+    action = request.POST.get("action", "")
+    before_status = certificate.verification_status
+    status_enum = Certificate.VerificationStatus
+    if action == "confirm":
+        certificate.verification_status = status_enum.MANUALLY_CONFIRMED
+        certificate.verified_by = request.user
+        certificate.verified_at = timezone.now()
+    elif action == "unconfirm":
+        has_artifacts = bool(certificate.verification_code or certificate.verification_url)
+        certificate.verification_status = (
+            status_enum.SELF_REPORTED if has_artifacts else status_enum.NONE
+        )
+        certificate.verified_by = None
+        certificate.verified_at = None
+    else:
+        messages.error(request, "Acción de verificación inválida.")
+        return redirect("documents:detail", pk=document.pk)
+
+    with transaction.atomic():
+        certificate.save(
+            update_fields=[
+                "verification_status",
+                "verified_by",
+                "verified_at",
+                "updated_at",
+            ]
+        )
+        ReviewEvent.objects.create(
+            certificate=certificate,
+            event_type=ReviewEvent.EventType.VERIFY,
+            actor=request.user,
+            reason=request.POST.get("reason", ""),
+            before={"verification_status": before_status},
+            after={
+                "verification_status": certificate.verification_status,
+                "action": action,
+            },
+        )
+    messages.success(request, "Verificación en origen actualizada.")
+    return redirect("documents:detail", pk=document.pk)
+
+
+@login_required
+@role_required(ROLE_REVIEWER)
+@require_http_methods(["GET", "POST"])
+def field_alias_list(request):
+    """List and manage field label aliases (reviewer+)."""
+    if request.method == "POST":
+        action = request.POST.get("action", "")
+        if action == "create":
+            scope_entity = None
+            entity_id = request.POST.get("scope_entity") or ""
+            if entity_id:
+                scope_entity = Entity.objects.filter(pk=entity_id).first()
+            _created, message = teach_field_alias(
+                field=request.POST.get("field", ""),
+                alias=request.POST.get("alias", ""),
+                actor=request.user,
+                scope_entity=scope_entity,
+            )
+            (messages.error if _created is None else messages.success)(
+                request, message
+            )
+        elif action in {"activate", "deactivate"}:
+            alias = get_object_or_404(FieldLabelAlias, pk=request.POST.get("alias_id"))
+            alias.is_active = action == "activate"
+            alias.save(update_fields=["is_active", "updated_at"])
+            messages.success(request, "Alias actualizado.")
+        return redirect("documents:field_aliases")
+
+    aliases = FieldLabelAlias.objects.select_related("scope_entity", "created_by")
+    return render(
+        request,
+        "documents/field_aliases.html",
+        {
+            "aliases": aliases,
+            "can_manage": True,
+            "field_choices": FieldLabelAlias.Field.choices,
+            "entities": Entity.objects.filter(is_active=True).order_by("name"),
+        },
+    )
+
+
 @login_required
 @role_required(ROLE_REVIEWER)
 @require_POST
@@ -679,6 +821,11 @@ def review_reextract(request, pk: int):
     document = get_object_or_404(Document, pk=pk)
     certificate = getattr(document, "certificate", None)
     before_state = document.processing_state
+    before_values = (
+        {name: getattr(certificate, name) for name in REEXTRACT_DIFF_FIELDS}
+        if certificate is not None
+        else {}
+    )
     try:
         with transaction.atomic():
             transition_document(
@@ -709,6 +856,20 @@ def review_reextract(request, pk: int):
     if document.processing_state == Document.ProcessingState.EXTRACTED:
         classify_certificate(document)
         document.refresh_from_db()
+    certificate = getattr(document, "certificate", None)
+    if certificate is not None and before_values:
+        changes = [
+            {
+                "field": name,
+                "label": FIELD_LABELS.get(name, name),
+                "before": str(before_values.get(name) or "—"),
+                "after": str(getattr(certificate, name) or "—"),
+            }
+            for name in REEXTRACT_DIFF_FIELDS
+            if str(before_values.get(name) or "") != str(getattr(certificate, name) or "")
+        ]
+        if changes:
+            request.session[f"reextract_diff_{document.pk}"] = changes
     if extract_result.error:
         messages.error(request, f"Re-extracción falló: {extract_result.error}")
     else:

@@ -61,6 +61,15 @@
           <option value="1" {% if unverified %}selected{% endif %}>Con campos sin verificar</option>
         </select>
       </p>
+      <p>
+        <label for="f-verification">Verificación en origen</label>
+        <select id="f-verification" name="verification">
+          <option value="">Todas</option>
+          {% for value, label in verification_choices %}
+            <option value="{{ value }}" {% if verification == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </p>
       <button type="submit" class="button">Filtrar</button>
       <a href="{% url 'documents:list' %}">Limpiar</a>
     </form>

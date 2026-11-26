@@ -88,6 +88,19 @@
               <span class="muted">Campos extraídos sin evidencia verificable o por fallback:{% for field, label in unverified_labels %} {{ label }}{% if not forloop.last %}, {% endif %}{% endfor %}. Editar o validar los limpia.</span>
             </p>
           {% endif %}
+          {% if reextract_diff %}
+            <div class="panel">
+              <h3>Cambios tras re-extraer</h3>
+              <table class="data-table">
+                <thead><tr><th>Campo</th><th>Antes</th><th>Ahora</th></tr></thead>
+                <tbody>
+                  {% for change in reextract_diff %}
+                    <tr><td>{{ change.label }}</td><td>{{ change.before }}</td><td><strong>{{ change.after }}</strong></td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% endif %}
           {% if certificate.review_status != "approved" and certificate.review_status != "rejected" %}
             {% if reason_items %}
               <ul class="review-reasons">
@@ -112,7 +125,7 @@
               <tbody>
                 <tr id="f-student">
                   <th>Alumno</th>
-                  <td class="cell-view">{{ certificate.student_name|default:"—" }}{% if "student_name" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if warnings.fields %} <a class="warn" href="#datos">⚠ {{ warnings.fields }}</a>{% endif %}</td>
+                  <td class="cell-view">{{ certificate.student_name|default:"—" }}{% if "student_name" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if warnings.fields %} <a class="warn" href="#datos">⚠ {{ warnings.fields }}</a>{% endif %}{% if not certificate.student_name or "student_name" in certificate.unverified_fields %}{% include "documents/_teach_alias.html" with alias_field="student_name" %}{% endif %}</td>
                   <td class="cell-edit">{{ form.student_name }}</td>
                 </tr>
                 <tr id="f-language">
@@ -126,7 +139,7 @@
                         <a class="button" href="{% url 'catalog:resolve' %}?document={{ document.pk }}&field=language">Resolver</a>
                       {% endif %}
                     {% endif %}
-                    {% if "language_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if warnings.language_literal %} <a class="warn" href="#f-language">⚠ {{ warnings.language_literal }}</a>{% endif %}
+                    {% if "language_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if warnings.language_literal %} <a class="warn" href="#f-language">⚠ {{ warnings.language_literal }}</a>{% endif %}{% if not certificate.language_literal or "language_literal" in certificate.unverified_fields %}{% include "documents/_teach_alias.html" with alias_field="language" %}{% endif %}
                   </td>
                   <td class="cell-edit">
                     <div class="edit-stack">
@@ -146,7 +159,7 @@
                         <a class="button" href="{% url 'catalog:resolve' %}?document={{ document.pk }}&field=entity">Resolver</a>
                       {% endif %}
                     {% endif %}
-                    {% if "entity_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if warnings.entity_literal %} <a class="warn" href="#f-entity">⚠ {{ warnings.entity_literal }}</a>{% endif %}
+                    {% if "entity_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if warnings.entity_literal %} <a class="warn" href="#f-entity">⚠ {{ warnings.entity_literal }}</a>{% endif %}{% if not certificate.entity_literal or "entity_literal" in certificate.unverified_fields %}{% include "documents/_teach_alias.html" with alias_field="entity" %}{% endif %}
                   </td>
                   <td class="cell-edit">
                     <div class="edit-stack">
@@ -157,12 +170,12 @@
                 </tr>
                 <tr>
                   <th>Organismo emisor</th>
-                  <td class="cell-view">{{ certificate.issuing_body_literal|default:"—" }}{% if "issuing_body_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}</td>
+                  <td class="cell-view">{{ certificate.issuing_body_literal|default:"—" }}{% if "issuing_body_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if not certificate.issuing_body_literal or "issuing_body_literal" in certificate.unverified_fields %}{% include "documents/_teach_alias.html" with alias_field="issuing_body" %}{% endif %}</td>
                   <td class="cell-edit">{{ form.issuing_body_literal }}</td>
                 </tr>
                 <tr>
                   <th>Centro de examen</th>
-                  <td class="cell-view">{{ certificate.test_center_literal|default:"—" }}{% if "test_center_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}</td>
+                  <td class="cell-view">{{ certificate.test_center_literal|default:"—" }}{% if "test_center_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if not certificate.test_center_literal or "test_center_literal" in certificate.unverified_fields %}{% include "documents/_teach_alias.html" with alias_field="test_center" %}{% endif %}</td>
                   <td class="cell-edit">{{ form.test_center_literal }}</td>
                 </tr>
                 <tr>
@@ -179,7 +192,7 @@
                         <a class="button" href="{% url 'catalog:resolve' %}?document={{ document.pk }}&field=exam">Resolver</a>
                       {% endif %}
                     {% endif %}
-                    {% if "exam_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}
+                    {% if "exam_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if not certificate.exam_literal or "exam_literal" in certificate.unverified_fields %}{% include "documents/_teach_alias.html" with alias_field="exam" %}{% endif %}
                   </td>
                   <td class="cell-edit">
                     <div class="edit-stack">
@@ -190,7 +203,7 @@
                 </tr>
                 <tr>
                   <th>Nivel literal</th>
-                  <td class="cell-view">{{ certificate.level_literal|default:"—" }}{% if "level_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}</td>
+                  <td class="cell-view">{{ certificate.level_literal|default:"—" }}{% if "level_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if not certificate.level_literal or "level_literal" in certificate.unverified_fields %}{% include "documents/_teach_alias.html" with alias_field="level" %}{% endif %}</td>
                   <td class="cell-edit">{{ form.level_literal }}</td>
                 </tr>
                 <tr>
@@ -205,12 +218,12 @@
                 </tr>
                 <tr>
                   <th>Puntuación</th>
-                  <td class="cell-view">{{ certificate.score_literal|default:"—" }}{% if "score_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}</td>
+                  <td class="cell-view">{{ certificate.score_literal|default:"—" }}{% if "score_literal" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if not certificate.score_literal or "score_literal" in certificate.unverified_fields %}{% include "documents/_teach_alias.html" with alias_field="score" %}{% endif %}</td>
                   <td class="cell-edit">{{ form.score_literal }}</td>
                 </tr>
                 <tr>
                   <th>Fecha de expedición</th>
-                  <td class="cell-view">{{ certificate.issue_date|date:"Y-m-d"|default:"—" }}{% if "issue_date" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}</td>
+                  <td class="cell-view">{{ certificate.issue_date|date:"Y-m-d"|default:"—" }}{% if "issue_date" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if not certificate.issue_date or "issue_date" in certificate.unverified_fields %}{% include "documents/_teach_alias.html" with alias_field="issue_date" %}{% endif %}</td>
                   <td class="cell-edit">{{ form.issue_date }}</td>
                 </tr>
                 <tr>
@@ -230,7 +243,7 @@
                 </tr>
                 <tr>
                   <th>Código de certificado</th>
-                  <td class="cell-view">{{ certificate.certificate_code|default:"—" }}{% if "certificate_code" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}</td>
+                  <td class="cell-view">{{ certificate.certificate_code|default:"—" }}{% if "certificate_code" in certificate.unverified_fields %} <span class="unverified-badge">sin verificar</span>{% endif %}{% if not certificate.certificate_code or "certificate_code" in certificate.unverified_fields %}{% include "documents/_teach_alias.html" with alias_field="certificate_code" %}{% endif %}</td>
                   <td class="cell-edit">{{ form.certificate_code }}</td>
                 </tr>
                 <tr id="f-confidence">
@@ -273,6 +286,35 @@
 
           {% if warnings.document %}<p class="warn">⚠ {{ warnings.document }}</p>{% endif %}
 
+          {% if certificate.verification_status != "none" or can_review %}
+            <h3>Verificación en origen</h3>
+            <p>
+              <span class="unverified-badge">{{ certificate.get_verification_status_display }}</span>
+              {% if certificate.verification_code %}<span class="muted">Código: <code>{{ certificate.verification_code }}</code></span>{% endif %}
+              {% if certificate.verification_url %}
+                <a href="{{ certificate.verification_url }}" target="_blank" rel="noopener">Abrir portal de verificación</a>
+              {% endif %}
+            </p>
+            {% if certificate.verified_by %}
+              <p class="muted">Confirmado por {{ certificate.verified_by.username }} el {{ certificate.verified_at|date:"Y-m-d H:i" }}</p>
+            {% endif %}
+            {% if certificate.verification_evidence.auto_check %}
+              <p class="muted">Chequeo automático: {{ certificate.verification_evidence.auto_check.detail }} ({{ certificate.verification_evidence.auto_check.checked_at|slice:":10" }})</p>
+            {% endif %}
+            {% if can_review %}
+              <form method="post" action="{% url 'documents:verify_source' document.pk %}" class="inline-form">
+                {% csrf_token %}
+                {% if certificate.verification_status == "manually_confirmed" %}
+                  <input type="hidden" name="action" value="unconfirm">
+                  <button type="submit" class="link-button">Quitar confirmación</button>
+                {% else %}
+                  <input type="hidden" name="action" value="confirm">
+                  <button type="submit" class="button">Verificado en origen</button>
+                {% endif %}
+              </form>
+            {% endif %}
+          {% endif %}
+
           {% if certificate.evidence %}
             <h3>Evidencia</h3>
             <ul>
@@ -284,6 +326,7 @@
 
           <p>
             <a class="button" href="{% url 'documents:history' document.pk %}">Ver historial</a>
+            {% if can_review %}<a class="button" href="{% url 'documents:field_aliases' %}">Aliases de campos</a>{% endif %}
             {% if document.paperless_document_id %}
               <a class="button" href="{% url 'documents:original' document.pk %}" target="_blank" rel="noopener">Abrir original</a>
             {% endif %}

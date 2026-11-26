@@ -161,6 +161,29 @@ class Certificate(models.Model):
     review_reasons = models.JSONField(default=list, blank=True)
     manual_fields = models.JSONField(default=list, blank=True)
     unverified_fields = models.JSONField(default=list, blank=True)
+    class VerificationStatus(models.TextChoices):
+        NONE = "none", "Sin datos de verificación"
+        SELF_REPORTED = "self_reported", "Autodeclarado en el documento"
+        VERIFIED_AT_SOURCE = "verified_at_source", "Verificado en origen"
+        MANUALLY_CONFIRMED = "manually_confirmed", "Confirmado por revisor"
+
+    verification_code = models.CharField(max_length=200, blank=True)
+    verification_url = models.CharField(max_length=500, blank=True)
+    verification_status = models.CharField(
+        max_length=25,
+        choices=VerificationStatus.choices,
+        default=VerificationStatus.NONE,
+        db_index=True,
+    )
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="verified_certificates",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    verified_at = models.DateTimeField(null=True, blank=True)
+    verification_evidence = models.JSONField(default=dict, blank=True)
     prompt_version = models.CharField(max_length=50, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -196,6 +219,7 @@ class ReviewEvent(models.Model):
         REPROCESS = "reprocess", "Reproceso"
         REEXTRACT = "reextract", "Re-extracción"
         LEARN = "learn", "Aprendizaje"
+        VERIFY = "verify", "Verificación en origen"
 
     certificate = models.ForeignKey(Certificate, related_name="events", on_delete=models.CASCADE)
     event_type = models.CharField(max_length=20, choices=EventType.choices)
@@ -216,3 +240,77 @@ class ReviewEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.event_type} on {self.certificate_id}"
+
+
+class FieldLabelAlias(models.Model):
+    """Configurable label alias: maps a printed label to an extraction field.
+
+    ``scope_entity`` null means the alias applies globally; when set, it
+    applies only to documents whose certificate resolves to that entity
+    (usable on re-extract, after classification).
+    """
+
+    class Field(models.TextChoices):
+        STUDENT_NAME = "student_name", "Nombre del alumno"
+        LANGUAGE = "language", "Idioma"
+        ENTITY = "entity", "Entidad"
+        ISSUING_BODY = "issuing_body", "Organismo emisor"
+        TEST_CENTER = "test_center", "Centro de examen"
+        EXAM = "exam", "Examen"
+        LEVEL = "level", "Nivel"
+        SCORE = "score", "Puntuación"
+        CERTIFICATE_CODE = "certificate_code", "Código de certificado"
+        ISSUE_DATE = "issue_date", "Fecha de expedición"
+        EXAM_DATE = "exam_date", "Fecha de examen"
+        RESULT_DATE = "result_date", "Fecha de resultado"
+
+    class Source(models.TextChoices):
+        MANUAL = "manual", "Manual"
+        LEARNED = "learned", "Aprendido"
+
+    field = models.CharField(max_length=30, choices=Field.choices, db_index=True)
+    alias = models.CharField(max_length=300)
+    normalized_alias = models.CharField(max_length=300)
+    scope_entity = models.ForeignKey(
+        "catalog.Entity",
+        related_name="field_label_aliases",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    scope_key = models.CharField(max_length=50)
+    source = models.CharField(
+        max_length=10, choices=Source.choices, default=Source.MANUAL
+    )
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="field_label_aliases",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["field", "alias"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["field", "normalized_alias", "scope_key"],
+                name="uniq_field_alias_scope",
+            )
+        ]
+
+    def __str__(self) -> str:
+        scope = self.scope_entity.name if self.scope_entity_id else "global"
+        return f"{self.field}: {self.alias} ({scope})"
+
+    def save(self, *args, **kwargs):
+        from catalog.normalization import normalize_alias_text
+
+        self.normalized_alias = normalize_alias_text(self.alias)
+        self.scope_key = (
+            "global" if self.scope_entity_id is None else str(self.scope_entity_id)
+        )
+        super().save(*args, **kwargs)

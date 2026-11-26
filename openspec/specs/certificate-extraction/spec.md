@@ -191,3 +191,156 @@ review event describing the re-extraction.
 
 - **WHEN** re-extraction runs on a certificate with fields in `manual_fields`
 - **THEN** those fields are not overwritten by the new extraction
+
+### Requirement: Dates with month names parse in supported languages
+
+The system SHALL parse dates whose month is written as a name or
+abbreviation in Catalan, Spanish, English, French, German, Portuguese, or
+Italian (e.g. "18 Setembre 2026", "18 Septiembre 2026", "5 décembre 2020",
+"3 März 2021"). Candidates containing such dates SHALL NOT be silently
+dropped: when the full value cannot be normalized they SHALL surface as
+ambiguous date evidence for review.
+
+#### Scenario: Catalan month name parses
+
+- **WHEN** a candidate text contains "18 Setembre 2026"
+- **THEN** the system parses it as 2026-09-18 (or the entity-ordered
+  equivalent) instead of discarding it
+
+#### Scenario: Trilingual repeated date collapses to one candidate
+
+- **WHEN** the document prints "18 Setembre 2026 · 18 Septiembre 2026 ·
+  18 September 2026" for the same date
+- **THEN** harvesting produces a single date candidate, not three
+
+#### Scenario: Unparseable date-like text stays visible
+
+- **WHEN** a candidate mentions a month name but no parseable day/year
+  (e.g. "SEPTIEMBRE 2020")
+- **THEN** it is retained as ambiguous date evidence and triggers the
+  ambiguous-date review reason
+
+### Requirement: Deterministic date harvesting covers label-less dates
+
+When model extraction returns few or no date candidates, the system SHALL
+scan the stored page texts for date-like patterns regardless of nearby
+labels and add missing candidates with role `unknown`, so dates printed
+beside signatures or in unlabeled blocks are not lost. Harvested candidates
+SHALL be deduplicated against model-returned candidates by parsed value.
+
+#### Scenario: Label-less issue block is harvested
+
+- **WHEN** the model returns no dates but page text contains "18 Setembre
+  2026 · 18 Septiembre 2026 · 18 September 2026" near the signature block
+- **THEN** a date candidate is added with role `unknown` and the document
+  routes to review with the ambiguous-date reason rather than losing the
+  date entirely
+
+#### Scenario: Harvest respects birth-date exclusions
+
+- **WHEN** a date-like pattern appears on a line containing birth/nacimiento/
+  naixement/Geburtsdatum markers
+- **THEN** the harvester does not add it as a certificate date candidate
+
+#### Scenario: Implausible years are rejected
+
+- **WHEN** a harvested pattern yields a year outside a sane certificate
+  range (e.g. "0399")
+- **THEN** it is not added as a date candidate
+
+### Requirement: Student names exclude honorifics and titles
+
+Extracted `student_name` values SHALL NOT include leading honorifics or
+titles. The system SHALL strip leading title tokens from a curated
+multilingual list covering the certificate languages in use, preserve
+titles inside the name, and SHALL NOT strip tokens that can be legitimate
+given names or initials.
+
+#### Scenario: Spanish honorific stripped
+
+- **WHEN** the document prints "Doña María González Pérez" as the student
+  name
+- **THEN** `student_name` stores "María González Pérez"
+
+#### Scenario: French treatment stripped
+
+- **WHEN** the document prints "Mme Claire Martin" as the student name
+- **THEN** `student_name` stores "Claire Martin"
+
+#### Scenario: German title stripped
+
+- **WHEN** the document prints "Frau Anna Schmidt" as the student name
+- **THEN** `student_name` stores "Anna Schmidt"
+
+#### Scenario: Ambiguous token preserved
+
+- **WHEN** the extracted name begins with a token that can be a real given
+  name or initial (e.g. "Don Pablo Rivera" where "Don" is part of the
+  registered name)
+- **THEN** the system does not strip the token and stores the name as
+  printed
+
+#### Scenario: Title inside the name preserved
+
+- **WHEN** the name is "María de los Ángeles Pérez"
+- **THEN** no token is removed because none is a leading honorific
+
+#### Scenario: Stripping is auditable
+
+- **WHEN** stripping changes the extracted value
+- **THEN** the original value remains recoverable from stored evidence or
+  extraction metadata for audit
+
+### Requirement: Extraction incorporates configured field label aliases
+
+When building the extraction instruction and running deterministic field
+fallbacks, the system SHALL include the active field label aliases that
+apply to the document: all global aliases for the field, plus aliases
+scoped to the document's resolved entity when the document has already been
+classified. Aliases SHALL be presented to the model as additional label
+examples for their field and SHALL extend fallback label matching without
+weakening verbatim-evidence validation.
+
+#### Scenario: Global alias appears in the extraction instruction
+
+- **WHEN** an active global alias exists for the student name field
+- **THEN** the extraction instruction lists it as an additional label
+  example for that field
+
+#### Scenario: Entity-scoped alias applies after classification
+
+- **WHEN** a document is reprocessed after classification and an active
+  alias is scoped to its resolved entity
+- **THEN** the extraction for that document includes the scoped alias
+
+#### Scenario: Unclassified document uses global aliases only
+
+- **WHEN** a document has no resolved entity yet (first extraction pass)
+- **THEN** only global aliases are applied; entity-scoped aliases are not
+  used
+
+#### Scenario: Alias-derived values still require evidence
+
+- **WHEN** a value is recovered through an alias
+- **THEN** it carries evidence from the document text like any other
+  extracted value, and unverifiable evidence still marks the field
+  unverified rather than discarding the value
+
+### Requirement: Extraction captures verification artifacts
+
+Extraction SHALL capture the issuer verification code and verification URL
+when present on the document, using deterministic label-anchored patterns
+("Cod. Verificació", "Verification Number", "CSV", "URL Verif", verifier
+links) across the certificate languages in use, and SHALL store them on the
+certificate for review display.
+
+#### Scenario: Labeled code captured deterministically
+
+- **WHEN** the document prints "Cod. Verificació: H480BGXM95JWD2R2"
+- **THEN** the certificate stores that code without relying on the model
+
+#### Scenario: Model-assisted capture for unlabeled values
+
+- **WHEN** a verification number appears without a clear label but the
+  model identifies it with evidence
+- **THEN** the value is stored and evidence-validated like other fields

@@ -29,6 +29,13 @@ from catalog.models import (
 from catalog.normalization import normalize_catalog_text
 from documents.models import Certificate, Document
 from documents.services.format_profile import score_document_format
+from documents.services.months import (
+    DAY_MONTH_YEAR_RE,
+    MONTH_DAY_YEAR_RE,
+    MONTH_NAME_RE,
+    MONTH_YEAR_RE,
+    month_number,
+)
 from documents.services.labels import (
     apply_manual_review_label,
     sync_classification_tags,
@@ -72,12 +79,7 @@ EMBEDDED_DATE_TOKEN = re.compile(
     r"|[A-Za-zÀ-ÿ]+\s+\d{1,2},?\s+\d{4}",
     re.IGNORECASE,
 )
-MONTH_NAME = re.compile(
-    r"\b(?:jan(?:uary|ero)?|feb(?:ruary|rero)?|mar(?:ch|zo)?|apr(?:il|il)?"
-    r"|may|jun(?:e|io)?|jul(?:y|io)?|aug(?:ust|usto)?|sep(?:t(?:ember)?|iembre)?"
-    r"|oct(?:ober|ubre)?|nov(?:ember|iembre)?|dec(?:ember|iembre)?)\b",
-    re.IGNORECASE,
-)
+MONTH_NAME = MONTH_NAME_RE
 
 EXPLICIT_DATE_FORMATS = (
     "%d %B %Y",
@@ -260,6 +262,36 @@ def _parse_iso_date(text: str) -> date | None:
         return None
 
 
+def _parse_named_month_date(text: str) -> tuple[date | None, bool] | None:
+    """Parse dates built on multilingual month names.
+
+    Returns ``(date, False)`` for full dates, ``(None, True)`` for
+    month+year-only text (kept as ambiguous evidence), and ``None`` when no
+    month-name pattern matches so other parsers can try.
+    """
+    cleaned = text.strip()
+    for regex, day_first in (
+        (DAY_MONTH_YEAR_RE, True),
+        (MONTH_DAY_YEAR_RE, False),
+    ):
+        match = regex.search(cleaned)
+        if match is None:
+            continue
+        day_s, month_s, year_s = (
+            match.groups() if day_first else (match.group(2), match.group(1), match.group(3))
+        )
+        month = month_number(month_s)
+        if month is None:
+            continue
+        parsed = _numeric_date(int(year_s), month, int(day_s))
+        if parsed is not None:
+            return parsed, False
+    month_year = MONTH_YEAR_RE.search(cleaned)
+    if month_year is not None and month_number(month_year.group(1)) is not None:
+        return None, True
+    return None
+
+
 def parse_date_text(text: str) -> tuple[date | None, bool]:
     """Return (date, ambiguous). Ambiguous means day/month cannot be decided."""
     cleaned = (text or "").strip()
@@ -273,6 +305,9 @@ def parse_date_text(text: str) -> tuple[date | None, bool]:
         return numeric, True
     if numeric is not None:
         return numeric, False
+    named = _parse_named_month_date(cleaned)
+    if named is not None:
+        return named
     for fmt in EXPLICIT_DATE_FORMATS:
         try:
             return datetime.strptime(cleaned, fmt).date(), False
