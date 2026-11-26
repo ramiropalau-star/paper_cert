@@ -555,6 +555,7 @@ def _fallback_score(page_texts: dict[int, str]) -> FieldValue | None:
             if match is None:
                 continue
             value = match.group(0) if pattern is _SCORE_OVER_RE else match.group(1)
+            value = " ".join(value.split())
             return FieldValue(
                 value=value.strip(),
                 evidence=FieldEvidence(
