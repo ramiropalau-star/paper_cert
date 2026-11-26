@@ -449,7 +449,9 @@ def document_queue(request):
 def _paperless_url(document: Document) -> str:
     if not document.paperless_document_id:
         return ""
-    base = str(settings.APP.get("paperless_ui_url") or settings.APP["paperless_url"]).rstrip("/")
+    base = str(settings.APP.get("paperless_ui_url") or "").rstrip("/")
+    if not base:
+        return ""
     return f"{base}/documents/{document.paperless_document_id}/"
 
 

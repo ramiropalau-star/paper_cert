@@ -56,7 +56,7 @@ def read_app_settings(environ: Mapping[str, str] | None = None) -> dict[str, obj
         "llm_max_input_chars": env_int(source, "APP_LLM_MAX_INPUT_CHARS", 40000),
         "confidence_review_threshold": env_float(source, "APP_CONFIDENCE_REVIEW_THRESHOLD", 0.6),
         "paperless_url": source.get("APP_PAPERLESS_URL", "http://paperless:8000"),
-        "paperless_ui_url": source.get("APP_PAPERLESS_UI_URL", source.get("APP_PAPERLESS_URL", "")),
+        "paperless_ui_url": source.get("APP_PAPERLESS_UI_URL", ""),
         "paperless_token": source.get("APP_PAPERLESS_TOKEN", ""),
         "paperless_other_tag": source.get("APP_PAPERLESS_OTHER_TAG", "Otros"),
         "paperless_timeout_seconds": env_float(source, "APP_PAPERLESS_TIMEOUT_SECONDS", 30.0),
