@@ -8,7 +8,7 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 
 EXPECTED_SERVICES = {"app", "ocr", "n8n", "paperless", "db", "redis", "ollama", "watcher"}
-PUBLISHED_SERVICES = {"app", "n8n", "paperless"}
+PUBLISHED_SERVICES = {"app", "n8n"}
 
 
 def _env_example_keys() -> set[str]:
@@ -111,6 +111,37 @@ def test_bootstrap_command_exists():
     command = ROOT / "core" / "management" / "commands" / "bootstrap.py"
     assert command.is_file()
     assert "seed_catalog" in command.read_text()
+
+
+def test_deploy_n8n_secure_cookie_follows_protocol(tmp_path):
+    """deploy.sh derives N8N_SECURE_COOKIE from N8N_PROTOCOL (task security 5.1)."""
+    import subprocess
+
+    deploy = (ROOT / "deploy.sh").read_text()
+    start = deploy.index("log()  {")
+    end = deploy.index("# Pide un token nuevo")
+    funcs = tmp_path / "deploy_funcs.sh"
+    funcs.write_text(deploy[start:end])
+
+    for protocol, expected in (("https", "true"), ("http", "false")):
+        (tmp_path / ".env").write_text(f"N8N_PROTOCOL={protocol}\n")
+        result = subprocess.run(
+            ["bash", "-c", f"source {funcs} && n8n_secure_cookie_value"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == expected
+
+    (tmp_path / ".env").write_text("N8N_PROTOCOL=ftp\n")
+    result = subprocess.run(
+        ["bash", "-c", f"source {funcs} && n8n_secure_cookie_value"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
 
 
 def test_n8n_workflows_are_valid_json_with_stages():

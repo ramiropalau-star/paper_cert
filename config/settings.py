@@ -40,13 +40,14 @@ def read_app_settings(environ: Mapping[str, str] | None = None) -> dict[str, obj
     source: Mapping[str, str] = os.environ if environ is None else environ
     return {
         "upload_max_bytes": env_int(source, "APP_UPLOAD_MAX_BYTES", 25 * 1024 * 1024),
+        "request_max_bytes": env_int(source, "APP_REQUEST_MAX_BYTES", 100 * 1024 * 1024),
         "pdf_max_pages": env_int(source, "APP_PDF_MAX_PAGES", 100),
         "embedded_text_min_chars": env_int(source, "APP_EMBEDDED_TEXT_MIN_CHARS", 30),
         "ocr_min_text_chars": env_int(source, "APP_OCR_MIN_TEXT_CHARS", 30),
         "ocr_low_confidence_threshold": env_float(source, "APP_OCR_LOW_CONFIDENCE_THRESHOLD", 0.55),
         "ocr_languages": env_list(source, "APP_OCR_LANGUAGES", "eng,spa"),
         "ocr_url": source.get("APP_OCR_URL", "http://ocr:8000"),
-        "ocr_timeout_seconds": env_float(source, "APP_OCR_TIMEOUT_SECONDS", 120.0),
+        "ocr_timeout_seconds": env_float(source, "APP_OCR_TIMEOUT_SECONDS", 660.0),
         "ocr_retries": env_int(source, "APP_OCR_RETRIES", 2),
         "ollama_url": source.get("APP_OLLAMA_URL", "http://ollama:11434"),
         "ollama_model": source.get("APP_OLLAMA_MODEL", "qwen2.5:7b-instruct"),
@@ -74,7 +75,17 @@ def read_app_settings(environ: Mapping[str, str] | None = None) -> dict[str, obj
         "inbox_dir": source.get("APP_INBOX_DIR", str(BASE_DIR / "var" / "inbox")),
         "inbox_poll_seconds": env_float(source, "APP_INBOX_POLL_SECONDS", 10.0),
         "paperless_sync_seconds": env_float(source, "APP_PAPERLESS_SYNC_SECONDS", 60.0),
+        "sync_overlap_seconds": env_float(source, "APP_SYNC_OVERLAP_SECONDS", 600.0),
+        "cache_dir": source.get("APP_CACHE_DIR", str(BASE_DIR / "var" / "cache")),
         "paperless_webhook_target": source.get("APP_PAPERLESS_WEBHOOK_TARGET", ""),
+        "paperless_retries": env_int(source, "APP_PAPERLESS_RETRIES", 2),
+        "paperless_retry_backoff_seconds": env_float(
+            source, "APP_PAPERLESS_RETRY_BACKOFF_SECONDS", 0.5
+        ),
+        "n8n_webhook_timeout_seconds": env_float(source, "APP_N8N_WEBHOOK_TIMEOUT_SECONDS", 10.0),
+        "recovery_interval_seconds": env_float(source, "APP_RECOVERY_INTERVAL_SECONDS", 60.0),
+        "recovery_stale_seconds": env_float(source, "APP_RECOVERY_STALE_SECONDS", 1800.0),
+        "recovery_max_attempts": env_int(source, "APP_RECOVERY_MAX_ATTEMPTS", 3),
     }
 
 
@@ -110,6 +121,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "core.middleware.RequestIdMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "core.middleware.RequestSizeLimitMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
@@ -180,6 +192,13 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 MEDIA_ROOT = APP["media_root"]
 MEDIA_URL = "media/"
 
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
+        "LOCATION": APP["cache_dir"],
+    }
+}
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 LOGIN_URL = "/accounts/login/"
@@ -200,14 +219,29 @@ X_FRAME_OPTIONS = "SAMEORIGIN"
 # Reject oversized non-file request bodies early. File size limits are enforced in intake.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 2 * 1024 * 1024
 
+LOG_FORMAT = os.environ.get("LOG_FORMAT", "keyvalue")
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "plain": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"},
+        "plain": {
+            "()": (
+                "core.logging.JsonFormatter"
+                if LOG_FORMAT == "json"
+                else "core.logging.KeyValueFormatter"
+            ),
+            "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
+        },
+    },
+    "filters": {
+        "request_id": {"()": "core.logging.RequestIdFilter"},
     },
     "handlers": {
-        "console": {"class": "logging.StreamHandler", "formatter": "plain"},
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "plain",
+            "filters": ["request_id"],
+        },
     },
     "root": {"handlers": ["console"], "level": os.environ.get("LOG_LEVEL", "INFO")},
     "loggers": {
