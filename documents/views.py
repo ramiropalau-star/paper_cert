@@ -30,6 +30,7 @@ from documents.filters import filter_documents
 from documents.forms import CertificateEditForm
 from documents.models import Document, ReviewEvent
 from documents.review_display import confidence_display, review_reason_items
+from documents.services.catalog_resolution import unresolved_catalog_fields
 from documents.services.classification import (
     classify_certificate,
     equivalence_tooltip,
@@ -343,6 +344,7 @@ def document_list(request):
             "entity": request.GET.get("entity", ""),
             "level": request.GET.get("level", ""),
             "issue_date": request.GET.get("issue_date", ""),
+            "catalog": request.GET.get("catalog", ""),
             "languages": Language.objects.filter(is_active=True),
             "entities": Entity.objects.filter(is_active=True),
             "exams": Exam.objects.filter(is_active=True),
@@ -374,6 +376,7 @@ def document_gallery(request):
             "language": request.GET.get("language", ""),
             "entity": request.GET.get("entity", ""),
             "organism": request.GET.get("organism", ""),
+            "catalog": request.GET.get("catalog", ""),
             "languages": Language.objects.filter(is_active=True),
             "entities": Entity.objects.filter(is_active=True),
         },
@@ -420,7 +423,7 @@ def bulk_review(request):
 
     params = {
         key: request.POST[key]
-        for key in ("state", "q", "language", "entity", "organism", "page")
+        for key in ("state", "q", "language", "entity", "organism", "catalog", "page")
         if request.POST.get(key)
     }
     url = reverse("documents:gallery")
@@ -522,6 +525,7 @@ def review_detail(request, pk: int):
                 (field, FIELD_LABELS.get(field, field))
                 for field in (certificate.manual_fields if certificate else [])
             ],
+            "unresolved_catalog": unresolved_catalog_fields(certificate),
         },
     )
 

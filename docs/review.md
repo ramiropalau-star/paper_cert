@@ -13,6 +13,8 @@ Only approved records enter the main Excel report.
 - **Idioma / Entidad**: catalog entry or literal text.
 - **Nivel**: CEFR level or literal level text.
 - **Fecha de expedición**: exact date (`YYYY-MM-DD`).
+- **Catálogo**: "Pendiente de catálogo" lists only documents with at least
+  one unresolved catalog literal (entity, exam, or language).
 
 The list also shows the student **NPA**, parsed from the original filename
 (`<año>ERASMUS<NPA>_...`, e.g. `2027ERASMUSWF29402_I....pdf` → `WF29402`);
@@ -71,6 +73,32 @@ Pipeline-stage codes (`ocr_failed`, `insufficient_text`,
 `low_ocr_confidence`, `original_unavailable`, `model_unavailable`, …) are
 also translated into operator-readable labels; see
 `documents/review_display.py` for the full mapping.
+
+## Catalog resolution
+
+When a certificate's `entity`, `exam`, or `language` literal did not match
+the catalog, the record shows a **Catálogo pendiente** badge in the list,
+gallery, and detail page, and the unresolved value offers a **Resolver**
+action (reviewers and admins only; viewers see the badge read-only).
+
+`/catalog/resolve/?document=<id>&field=<entity|exam|language>` lets the
+reviewer either pick an existing catalog entry (searchable by name or
+alias) or create a new one prefilled with the printed literal. Exam
+resolution is scoped to the certificate's resolved entity — if the entity
+is also unresolved, the page links to resolving it first. Languages can
+only be matched to existing entries plus a new alias.
+
+A successful resolution:
+
+- assigns the catalog foreign key and freezes the field in
+  `manual_fields` so reprocessing keeps the human choice;
+- registers the printed literal as an alias (`EntityAlias`, `ExamAlias`,
+  or `LanguageAlias`) — idempotent, and never reassigns an alias already
+  owned by another entry (the conflict is reported instead);
+- writes an `edit` `ReviewEvent` with the actor and before/after ids;
+- optionally re-runs classification (on by default) so dependent fields
+  and review reasons refresh — e.g. `unknown_entity` clears once the
+  entity resolves.
 
 ## Manual editing
 
@@ -156,7 +184,7 @@ blocking the decision):
 - Printed literals that resolved to catalog entries are saved as aliases, so
   the next document with the same wording classifies automatically.
 - A manually assigned entity/exam on an unknown literal creates the missing
-  `Exam` entry (entities are still created via the Django admin).
+  `Exam` entry (entities can also be created inline via catalog resolution).
 - A manually corrected UV L2 equivalence creates an unbanded `Equivalence`
   rule (`source="review"`) when none exists for that exam/level.
 - A manually corrected CEFR level creates an **inactive**

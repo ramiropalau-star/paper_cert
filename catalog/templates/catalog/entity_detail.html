@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}{{ entity.name }} · Catálogo{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>{{ entity.name }}
+    {% if entity.is_active %}<span class="role-badge">Activa</span>{% else %}<span class="role-badge">Inactiva</span>{% endif %}
+  </h1>
+  <p>
+    <a href="{% url 'catalog:equivalences' %}">← Tabla de equivalencias</a>
+    · <a href="{% url 'catalog:entity_new' %}">Añadir entidad</a>
+  </p>
+
+  {% if can_edit %}
+  <h2>Datos de la entidad</h2>
+  <form method="post" action="{% url 'catalog:entity_update' entity.pk %}" class="inline-form">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ request.path }}">
+    <label for="date-order">Orden de fechas en certificados</label>
+    <select id="date-order" name="date_order">
+      <option value="" {% if not entity.date_order %}selected{% endif %}>Sin definir</option>
+      {% for value, label in date_orders %}
+        <option value="{{ value }}" {% if entity.date_order == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <label><input type="checkbox" name="is_active" {% if entity.is_active %}checked{% endif %}> Activa</label>
+    <button type="submit" class="button">Guardar</button>
+  </form>
+  {% else %}
+  <p class="muted">Orden de fechas: {{ entity.get_date_order_display|default:"sin definir" }} · Activa: {{ entity.is_active|yesno:"Sí,No" }}</p>
+  {% endif %}
+
+  <h2>Aliases</h2>
+  {% if entity.aliases.all %}
+  <ul>
+    {% for alias in entity.aliases.all %}<li>{{ alias.alias }}</li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">Sin aliases registrados.</p>
+  {% endif %}
+  {% if can_edit %}
+  <form method="post" action="{% url 'catalog:alias_add' entity.pk %}" class="inline-form">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ request.path }}">
+    <input type="text" name="alias" placeholder="Nuevo alias o variante" required>
+    <button type="submit" class="button">Añadir alias</button>
+  </form>
+  {% endif %}
+
+  <h2>Exámenes</h2>
+  {% for exam in entity.exams.all %}
+    <h3>{{ exam.name }}
+      <span class="muted">({{ exam.language.name|default:"sin idioma" }}{% if not exam.is_active %} · inactivo{% endif %})</span>
+    </h3>
+    {% if exam.aliases.all %}
+    <p class="muted">Aliases: {% for alias in exam.aliases.all %}{{ alias.alias }}{% if not forloop.last %}, {% endif %}{% endfor %}</p>
+    {% endif %}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Banda mínima</th>
+          <th>Banda máxima</th>
+          <th>Nivel acreditado</th>
+          <th>Fuente</th>
+          <th>Activa</th>
+          {% if can_edit %}<th>Editar</th>{% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for eq in exam.equivalences.all %}
+        <tr id="eq-{{ eq.pk }}" class="eq-row">
+          <td>{{ eq.score_min|default:"—" }}</td>
+          <td>{{ eq.score_max|default:"—" }}</td>
+          <td>{{ eq.accredited_level }}</td>
+          <td>{{ eq.source }}</td>
+          <td>{{ eq.is_active|yesno:"Sí,No" }}</td>
+          {% if can_edit %}
+          <td>
+            <form method="post" action="{% url 'catalog:equivalence_update' eq.pk %}" class="inline-form">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.path }}">
+              <select name="accredited_level">
+                {% for value, label in levels %}
+                  <option value="{{ value }}" {% if eq.accredited_level == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+              <input type="text" name="score_min" value="{{ eq.score_min|default:'' }}" placeholder="min" size="5">
+              <input type="text" name="score_max" value="{{ eq.score_max|default:'' }}" placeholder="max" size="5">
+              <label><input type="checkbox" name="is_active" {% if eq.is_active %}checked{% endif %}> activa</label>
+              <button type="submit" class="link-button">Guardar</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr><td colspan="{% if can_edit %}6{% else %}5{% endif %}">Sin equivalencias definidas.</td></tr>
+        {% endfor %}
+        {% if can_edit %}
+        <tr>
+          <td colspan="6">
+            <form method="post" action="{% url 'catalog:equivalence_add' exam.pk %}" class="inline-form">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.path }}">
+              <strong>Añadir equivalencia:</strong>
+              <select name="accredited_level">
+                <option value="">Nivel…</option>
+                {% for value, label in levels %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+              </select>
+              <input type="text" name="score_min" placeholder="min" size="5">
+              <input type="text" name="score_max" placeholder="max" size="5">
+              <input type="text" name="source" placeholder="fuente" size="10">
+              <button type="submit" class="link-button">Añadir</button>
+            </form>
+          </td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  {% empty %}
+    <p class="muted">Esta entidad no tiene exámenes.</p>
+  {% endfor %}
+
+  {% if can_edit %}
+  <h2>Nuevo examen</h2>
+  <form method="post" action="{% url 'catalog:exam_create' entity.pk %}" class="inline-form">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{{ request.path }}">
+    <input type="text" name="name" placeholder="Nombre del examen" required>
+    <select name="language">
+      <option value="">Sin idioma</option>
+      {% for lang in languages %}<option value="{{ lang.pk }}">{{ lang.name }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="button">Crear examen</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

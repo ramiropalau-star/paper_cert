@@ -268,6 +268,11 @@ body {
   border-radius: 999px; background: #e8f0fe; color: #1d4ed8;
   font-size: 0.8rem; font-weight: 600;
 }
+.catalog-badge {
+  display: inline-block; margin-left: 0.4rem; padding: 0.1rem 0.5rem;
+  border-radius: 999px; background: #fef3c7; color: #92400e;
+  font-size: 0.75rem; font-weight: 600;
+}
 .role-option { display: inline-flex; align-items: center; gap: 0.35rem; margin-right: 1rem; }
 .panel form p label { display: block; font-size: 0.9rem; color: var(--muted); margin-bottom: 0.2rem; }
 .panel form input[type="text"],

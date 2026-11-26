@@ -2,9 +2,22 @@
 
 from datetime import date
 
-from django.db.models import Q, QuerySet
+from django.db.models import BooleanField, Case, Q, QuerySet, Value, When
 
 from documents.models import Document
+
+
+def _unresolved(fk: str, literal: str) -> Q:
+    return Q(**{f"certificate__{fk}__isnull": True}) & Q(
+        **{f"certificate__{literal}__regex": r"\S"}
+    )
+
+
+UNRESOLVED_CATALOG_Q = Q(certificate__isnull=False) & (
+    _unresolved("entity", "entity_literal")
+    | _unresolved("exam", "exam_literal")
+    | _unresolved("language", "language_literal")
+)
 
 STATE_FILTERS = {
     "pending": [Document.ProcessingState.PENDING_REVIEW.value],
@@ -35,6 +48,14 @@ def filter_documents(params) -> QuerySet:
         "certificate__exam",
         "uploaded_by",
     ).order_by("-created_at")
+
+    queryset = queryset.annotate(
+        catalog_pending=Case(
+            When(UNRESOLVED_CATALOG_Q, then=Value(True)),
+            default=Value(False),
+            output_field=BooleanField(),
+        )
+    )
 
     state = params.get("state") or ""
     if state in STATE_FILTERS:
@@ -79,5 +100,9 @@ def filter_documents(params) -> QuerySet:
             issue_date = None
         if issue_date is not None:
             queryset = queryset.filter(certificate__issue_date=issue_date)
+
+    catalog = (params.get("catalog") or "").strip()
+    if catalog == "pending":
+        queryset = queryset.filter(UNRESOLVED_CATALOG_Q)
 
     return queryset

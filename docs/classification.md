@@ -7,17 +7,29 @@ literal and unresolved.
 
 ## Catalog
 
-Master data is managed in Django admin (admin role), and equivalences also
-have an in-app UI at `/catalog/` for reviewers:
+Master data is browsable in-app at `/catalog/` for every authenticated
+user, with write controls for reviewers and admins:
+
+Catalog UI pages:
+
+- **Entity detail** (`/catalog/entities/<id>/`) — canonical name, active
+  flag, `date_order`, aliases, exams (language + equivalences), per-exam
+  equivalence add/update/deactivate, and exam creation.
+- **Resolve** (`/catalog/resolve/`) — assigns an unresolved certificate
+  literal to an existing entry or creates a new entity/exam from it; see
+  `docs/review.md` "Catalog resolution".
+- **Equivalence table** (`/catalog/`) — browses and edits equivalence
+  rules, and can also create an entity + exam + aliases + equivalences in
+  one form.
+
+Catalog data:
 
 - **Languages** and **Language aliases** — certified language.
 - **Entities** and **Entity aliases** — certifying bodies, including the
   `date_order` used to disambiguate numeric dates.
 - **Exams** and **Exam aliases** — linked to an entity and optionally a
   language.
-- **Equivalences** — accredited CEFR level per exam (optionally score-banded);
-  browsable and editable at `/catalog/`, which can also create an entity +
-  exam + aliases + equivalences in one form.
+- **Equivalences** — accredited CEFR level per exam (optionally score-banded).
 - **CEFR conversion rules** — score range → CEFR level per exam.
 - **Format profiles** — learned per-entity format signatures rebuilt from
   approved certificates; see `docs/review.md`.
@@ -46,8 +58,9 @@ Approving or validating a certificate also learns catalog entries
 An entity literal that matches nothing stays unresolved
 (`entity = NULL`) and the record is routed to review with the
 `unknown_entity` reason, displayed as **"Entidad pendiente de
-identificar"**. The reviewer can fix the literal or extend the catalog and
-reprocess. The same applies to unknown languages (`unknown_language`).
+identificar"**. The reviewer resolves it inline from the detail page
+(catalog resolution, see `docs/review.md`) or fixes the literal and
+reprocesses. The same applies to unknown languages (`unknown_language`).
 
 ## CEFR levels
 

@@ -68,6 +68,11 @@
           {% endif %}
         {% else %}
           <h2>Datos extraídos</h2>
+          {% if unresolved_catalog %}
+            <p><span class="catalog-badge">Catálogo pendiente</span>
+              <span class="muted">Literales sin resolver:{% for f in unresolved_catalog %} {{ f }}{% if not forloop.last %}, {% endif %}{% endfor %}.</span>
+            </p>
+          {% endif %}
           {% if certificate.review_status != "approved" and certificate.review_status != "rejected" %}
             {% if reason_items %}
               <ul class="review-reasons">
@@ -97,7 +102,17 @@
                 </tr>
                 <tr id="f-language">
                   <th>Idioma</th>
-                  <td class="cell-view">{{ certificate.language.name|default:certificate.language_literal|default:"—" }}{% if warnings.language_literal %} <a class="warn" href="#f-language">⚠ {{ warnings.language_literal }}</a>{% endif %}</td>
+                  <td class="cell-view">
+                    {% if certificate.language %}
+                      {{ certificate.language.name }}
+                    {% else %}
+                      {{ certificate.language_literal|default:"—" }}
+                      {% if certificate.language_literal and can_review %}
+                        <a class="button" href="{% url 'catalog:resolve' %}?document={{ document.pk }}&field=language">Resolver</a>
+                      {% endif %}
+                    {% endif %}
+                    {% if warnings.language_literal %} <a class="warn" href="#f-language">⚠ {{ warnings.language_literal }}</a>{% endif %}
+                  </td>
                   <td class="cell-edit">
                     <div class="edit-stack">
                       <label>Catálogo{{ form.language }}</label>
@@ -107,7 +122,17 @@
                 </tr>
                 <tr id="f-entity">
                   <th>Entidad certificadora</th>
-                  <td class="cell-view">{{ certificate.entity.name|default:certificate.entity_literal|default:"—" }}{% if warnings.entity_literal %} <a class="warn" href="#f-entity">⚠ {{ warnings.entity_literal }}</a>{% endif %}</td>
+                  <td class="cell-view">
+                    {% if certificate.entity %}
+                      <a href="{% url 'catalog:entity_detail' certificate.entity.pk %}">{{ certificate.entity.name }}</a>
+                    {% else %}
+                      {{ certificate.entity_literal|default:"—" }}
+                      {% if certificate.entity_literal and can_review %}
+                        <a class="button" href="{% url 'catalog:resolve' %}?document={{ document.pk }}&field=entity">Resolver</a>
+                      {% endif %}
+                    {% endif %}
+                    {% if warnings.entity_literal %} <a class="warn" href="#f-entity">⚠ {{ warnings.entity_literal }}</a>{% endif %}
+                  </td>
                   <td class="cell-edit">
                     <div class="edit-stack">
                       <label>Catálogo{{ form.entity }}</label>
@@ -127,7 +152,19 @@
                 </tr>
                 <tr>
                   <th>Examen / certificado</th>
-                  <td class="cell-view">{{ certificate.exam.name|default:certificate.exam_literal|default:"—" }}</td>
+                  <td class="cell-view">
+                    {% if certificate.exam %}
+                      {{ certificate.exam.name }}
+                      {% if certificate.exam.entity %}
+                        <a class="muted" href="{% url 'catalog:entity_detail' certificate.exam.entity.pk %}">({{ certificate.exam.entity.name }})</a>
+                      {% endif %}
+                    {% else %}
+                      {{ certificate.exam_literal|default:"—" }}
+                      {% if certificate.exam_literal and can_review %}
+                        <a class="button" href="{% url 'catalog:resolve' %}?document={{ document.pk }}&field=exam">Resolver</a>
+                      {% endif %}
+                    {% endif %}
+                  </td>
                   <td class="cell-edit">
                     <div class="edit-stack">
                       <label>Catálogo{{ form.exam }}</label>

@@ -43,6 +43,13 @@
         <label for="f-organism">Organismo emisor</label>
         <input id="f-organism" name="organism" type="search" value="{{ organism }}" placeholder="Texto">
       </p>
+      <p>
+        <label for="f-catalog">Catálogo</label>
+        <select id="f-catalog" name="catalog">
+          <option value="">Todos</option>
+          <option value="pending" {% if catalog == "pending" %}selected{% endif %}>Pendiente de catálogo</option>
+        </select>
+      </p>
       <button type="submit" class="button">Filtrar</button>
       <a href="{% url 'documents:gallery' %}">Limpiar</a>
     </form>
@@ -54,6 +61,7 @@
       <input type="hidden" name="language" value="{{ language }}">
       <input type="hidden" name="entity" value="{{ entity }}">
       <input type="hidden" name="organism" value="{{ organism }}">
+      <input type="hidden" name="catalog" value="{{ catalog }}">
       <input type="hidden" name="page" value="{{ page.number }}">
 
       <div class="bulk-bar">
@@ -90,7 +98,7 @@
               {% endif %}
             </div>
             <div class="gallery-meta">
-              <div class="student"><a href="{% url 'documents:detail' document.pk %}">{{ certificate.student_name|default:"—" }}</a></div>
+              <div class="student"><a href="{% url 'documents:detail' document.pk %}">{{ certificate.student_name|default:"—" }}</a>{% if document.catalog_pending %} <span class="catalog-badge" title="Literales sin resolver en el catálogo">Catálogo</span>{% endif %}</div>
               <div>{{ certificate.language.name|default:certificate.language_literal|default:"—" }}</div>
               <div>{{ certificate.entity.name|default:certificate.entity_literal|default:"—" }}</div>
               <div>{{ certificate.cefr_level|default:certificate.level_literal|default:"—" }}</div>

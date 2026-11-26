@@ -10,6 +10,7 @@ from django.core.management.base import BaseCommand
 from documents.models import Document
 from documents.services.classification import classify_certificate
 from documents.services.extraction import extract_certificate
+from documents.services.reclassification import reclassify_document
 
 
 class Command(BaseCommand):
@@ -52,11 +53,9 @@ class Command(BaseCommand):
                         f"extraction failed: {extracted.error}"
                     )
                     continue
+                result = classify_certificate(document)
             else:
-                document.processing_state = Document.ProcessingState.EXTRACTED
-                document.save(update_fields=["processing_state", "updated_at"])
-
-            result = classify_certificate(document)
+                result = reclassify_document(document)
             certificate.refresh_from_db()
             processed += 1
             self.stdout.write(

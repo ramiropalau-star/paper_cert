@@ -47,6 +47,13 @@
         <label for="f-issue-date">Fecha de expedición</label>
         <input id="f-issue-date" name="issue_date" type="date" value="{{ issue_date }}">
       </p>
+      <p>
+        <label for="f-catalog">Catálogo</label>
+        <select id="f-catalog" name="catalog">
+          <option value="">Todos</option>
+          <option value="pending" {% if catalog == "pending" %}selected{% endif %}>Pendiente de catálogo</option>
+        </select>
+      </p>
       <button type="submit" class="button">Filtrar</button>
       <a href="{% url 'documents:list' %}">Limpiar</a>
     </form>
@@ -73,7 +80,10 @@
         {% for document in page %}
           {% with certificate=document.certificate %}
           <tr>
-            <td><a href="{% url 'documents:detail' document.pk %}">{{ document.original_filename }}</a></td>
+            <td>
+              <a href="{% url 'documents:detail' document.pk %}">{{ document.original_filename }}</a>
+              {% if document.catalog_pending %}<span class="catalog-badge" title="Literales sin resolver en el catálogo">Catálogo pendiente</span>{% endif %}
+            </td>
             <td>{{ document.npa|default:"—" }}</td>
             {% if certificate %}
               <td>{{ certificate.student_name|default:"—" }}</td>

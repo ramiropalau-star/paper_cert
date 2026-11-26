@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Resolver {{ field_label }} · Catálogo{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Resolver {{ field_label }}</h1>
+  <p>
+    Documento: <a href="{% url 'documents:detail' document.pk %}">{{ document.original_filename }}</a>
+    {% if certificate.student_name %}· {{ certificate.student_name }}{% endif %}
+  </p>
+  <p>
+    Texto en el certificado: <strong>«{{ literal|default:"(vacío)" }}»</strong>
+    {% if field in unresolved %}<span class="catalog-badge">Catálogo pendiente</span>{% endif %}
+  </p>
+
+  {% if exam_blocked %}
+    <p class="form-error">
+      Este examen pertenece a una entidad certificadora que aún no está resuelta.
+      <a href="{% url 'catalog:resolve' %}?document={{ document.pk }}&field=entity">Resolver primero la entidad</a>.
+    </p>
+  {% elif not can_edit %}
+    <p class="muted">Solo los revisores pueden resolver entradas del catálogo.</p>
+    <ul>
+      {% for candidate in candidates %}<li>{{ candidate.name }}</li>{% endfor %}
+    </ul>
+  {% else %}
+    <form method="get" class="filters">
+      <input type="hidden" name="document" value="{{ document.pk }}">
+      <input type="hidden" name="field" value="{{ field }}">
+      <p>
+        <label for="q">Buscar en el catálogo</label>
+        <input id="q" name="q" type="search" value="{{ query }}" placeholder="Nombre o alias">
+        <button type="submit" class="button">Buscar</button>
+      </p>
+    </form>
+
+    <form method="post" action="{% url 'catalog:resolve' %}">
+      {% csrf_token %}
+      <input type="hidden" name="document" value="{{ document.pk }}">
+      <input type="hidden" name="field" value="{{ field }}">
+
+      <h2>Entradas existentes</h2>
+      {% if candidates %}
+      <ul class="resolve-options">
+        {% for candidate in candidates %}
+        <li>
+          <label>
+            <input type="radio" name="choice" value="existing:{{ candidate.pk }}" required>
+            {{ candidate.name }}
+            {% if field == "exam" %}<span class="muted">({{ candidate.entity.name|default:"sin entidad" }}{% if candidate.language %} · {{ candidate.language.name }}{% endif %})</span>{% endif %}
+            {% if field == "language" %}<span class="muted">({{ candidate.code }})</span>{% endif %}
+          </label>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+        <p class="muted">{% if query %}Sin resultados para «{{ query }}».{% else %}No hay entradas activas.{% endif %}</p>
+      {% endif %}
+
+      {% if field != "language" %}
+      <h2>Crear nueva entrada</h2>
+      <p>
+        <label>
+          <input type="radio" name="choice" value="new">
+          Crear «{{ literal }}» como {% if field == "entity" %}entidad certificadora{% else %}examen{% endif %} nueva
+        </label>
+        <input type="text" name="name" value="{{ literal }}" placeholder="Nombre canónico">
+      </p>
+      {% else %}
+      <p class="muted">Los idiomas no se crean desde aquí; elegí uno existente arriba.</p>
+      {% endif %}
+
+      <p>
+        <label><input type="checkbox" name="reclasificar" value="on" checked> Reclasificar el documento después de resolver</label>
+      </p>
+      <p class="form-actions">
+        <button type="submit" class="button">Resolver</button>
+        <a href="{% url 'documents:detail' document.pk %}">Cancelar</a>
+      </p>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}
