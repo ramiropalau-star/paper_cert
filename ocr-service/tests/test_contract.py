@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import subprocess
 import time
 from pathlib import Path
 
@@ -59,6 +60,20 @@ def scanned_pdf_bytes(text: str = "LANGUAGE CERTIFICATE B2", pages: int = 1) -> 
     return buffer.getvalue()
 
 
+def mixed_pdf_bytes() -> bytes:
+    image = Image.open(io.BytesIO(image_bytes("SCANNED PAGE TEXT")))
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=(612, 792))
+    pdf.setFont("Helvetica-Bold", 28)
+    pdf.drawString(50, 700, "LANGUAGE CERTIFICATE CEFR B2 ENGLISH")
+    pdf.drawString(50, 660, "EMBEDDED PAGE ONE")
+    pdf.showPage()
+    pdf.drawImage(ImageReader(image), 40, 300, width=520, height=186)
+    pdf.showPage()
+    pdf.save()
+    return buffer.getvalue()
+
+
 def heic_bytes(text: str = "LANGUAGE CERTIFICATE B2") -> bytes:
     pillow_heif = pytest.importorskip("pillow_heif")
     pillow_heif.register_heif_opener()
@@ -84,8 +99,8 @@ def test_health_reports_engines() -> None:
     body = response.json()
     assert body["status"] == "healthy"
     assert body["contract_version"] == "v1"
-    assert body["engine"]["ocrmypdf"] != "unavailable"
     assert body["engine"]["tesseract"] != "unavailable"
+    assert "ocrmypdf" not in body["engine"]
 
 
 def test_text_pdf_uses_embedded_text_without_ocr() -> None:
@@ -190,18 +205,106 @@ def test_low_confidence_is_signalled(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.json()["quality"] == "low"
 
 
-def test_timeout_is_signalled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_request_timeout_is_signalled(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(service, "process_document_bytes", lambda *args, **kwargs: time.sleep(0.5))
-    monkeypatch.setattr(service.settings, "timeout_seconds", 0.05)
+    monkeypatch.setattr(service.settings, "request_timeout_seconds", 0.05)
     response = _post_image(image_bytes())
     assert response.status_code == 504
-    assert response.json()["error"]["code"] == "timeout"
+    assert response.json()["error"]["code"] == "request_timeout"
+    assert response.json()["error"]["retryable"] is True
+
+
+def test_single_recognition_pass_per_scanned_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[int] = []
+
+    def counting_tesseract(
+        path: Path, languages: tuple[str, ...], timeout: float, page_number: int | None = None
+    ) -> tuple[str, float]:
+        calls.append(page_number or 0)
+        return "LANGUAGE CERTIFICATE B2", 0.9
+
+    monkeypatch.setattr(service, "run_tesseract_tsv", counting_tesseract)
+    response = client.post(
+        "/v1/ocr",
+        files={"file": ("scan.pdf", scanned_pdf_bytes(pages=2), "application/pdf")},
+        data={"languages": "eng"},
+    )
+    assert response.status_code == 200, response.text
+    assert calls == [1, 2]
+    assert not hasattr(service, "ocrmypdf")
+
+
+def test_mixed_pdf_keeps_embedded_and_ocr_methods(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(service, "run_tesseract_tsv", lambda *a, **k: ("SCANNED PAGE TEXT", 0.8))
+    response = client.post(
+        "/v1/ocr",
+        files={"file": ("mixed.pdf", mixed_pdf_bytes(), "application/pdf")},
+        data={"languages": "eng"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["page_count"] == 2
+    assert body["pages"][0]["method"] == "embedded"
+    assert body["pages"][0]["confidence"] == 1.0
+    assert body["pages"][1]["method"] == "ocr"
+    assert body["pages"][1]["confidence"] == 0.8
+
+
+def test_page_timeout_identifies_page(monkeypatch: pytest.MonkeyPatch) -> None:
+    def timeout_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="tesseract", timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr(service.subprocess, "run", timeout_run)
+    with pytest.raises(service.OcrFailure) as excinfo:
+        service.run_tesseract_tsv(Path("page.png"), ("eng",), 5.0, page_number=3)
+    assert excinfo.value.code == "page_timeout"
+    assert excinfo.value.status_code == 504
+    assert excinfo.value.retryable is True
+    assert "page 3" in excinfo.value.message
+
+
+def test_request_timeout_between_pages(monkeypatch: pytest.MonkeyPatch) -> None:
+    def slow_tesseract(*args, **kwargs) -> tuple[str, float]:
+        time.sleep(0.3)
+        return "LANGUAGE CERTIFICATE B2", 0.9
+
+    monkeypatch.setattr(service, "run_tesseract_tsv", slow_tesseract)
+    monkeypatch.setattr(service.settings, "request_timeout_seconds", 0.55)
+    monkeypatch.setattr(service.settings, "page_timeout_seconds", 60.0)
+    with pytest.raises(service.OcrFailure) as excinfo:
+        service.process_pdf(scanned_pdf_bytes(pages=3), ("eng",), 100)
+    assert excinfo.value.code == "request_timeout"
+    assert excinfo.value.retryable is True
+
+
+def test_temp_files_removed_on_success_and_failure() -> None:
+    import tempfile
+
+    temp_root = Path(tempfile.gettempdir())
+    before = set(temp_root.glob("ocr-*"))
+    client.post(
+        "/v1/ocr",
+        files={"file": ("scan.pdf", scanned_pdf_bytes(), "application/pdf")},
+        data={"languages": "eng"},
+    )
+    client.post(
+        "/v1/ocr",
+        files={"file": ("broken.pdf", b"not a pdf", "application/pdf")},
+        data={"languages": "eng"},
+    )
+    after = set(temp_root.glob("ocr-*"))
+    assert after == before
 
 
 def test_configured_languages_are_forwarded(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, tuple[str, ...]] = {}
 
-    def fake_tesseract(path: Path, languages: tuple[str, ...], timeout: float) -> tuple[str, float]:
+    def fake_tesseract(
+        path: Path,
+        languages: tuple[str, ...],
+        timeout: float,
+        page_number: int | None = None,
+    ) -> tuple[str, float]:
         captured["languages"] = languages
         return "LANGUAGE CERTIFICATE B2", 0.9
 

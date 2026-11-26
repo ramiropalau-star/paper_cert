@@ -13,7 +13,10 @@ the job status until it is `ready`, then offers the download.
 - **Idioma**: catalog language (id), code, name, or literal text.
 - **Entidad**: catalog entity (id), name, or literal text.
 - **Nivel**: matches CEFR level or literal level text.
-- **Fecha de expedición**: exact date, or a `desde`/`hasta` range.
+- **Fecha de expedición**: exact date, or a `desde`/`hasta` range. Date
+  filters are calendar dates in the application timezone (`TIME_ZONE`) and
+  both range bounds are inclusive. Invalid or ambiguous values are rejected
+  with an error instead of being ignored.
 - **Incluir pendientes de revisión**: when checked, pending certificates are
   written to the secondary sheet.
 
@@ -52,7 +55,7 @@ Main sheet **Certificados** — approved records only, one row per certificate:
 | Certificado o examen | catalog exam name, else literal |
 | Puntuación | literal score |
 | Estado | `Aprobado` |
-| Fecha de procesamiento | document `updated_at` as date |
+| Fecha de procesamiento | document `processed_at` as date (falls back to `updated_at` for legacy rows) |
 | Referencia al documento | Paperless document id (or local pk) |
 | Nombre del fichero | document `original_filename` |
 | Código de certificado | `certificate_code` |
@@ -64,6 +67,17 @@ The header row is always present, and every sheet has an auto-filter
 over all columns. Date cells use Excel date formatting so they sort and
 filter correctly. Manually corrected values are reflected because the report
 reads the current certificate rows.
+
+## Counts and dates
+
+When a job reaches `ready`, `ReportJob.counts` stores the number of approved,
+pending (pending + validated when included), and rejected records that were
+written, plus the total; the detail page shows them. Jobs created before this
+field existed show "No disponible". The processing date comes from
+`Document.processed_at`, stamped once when the pipeline reaches
+`pending_review`, so later edits, approvals, or rejections do not change it;
+a reprocess stamps a new value when classification completes again. Aware
+timestamps are converted with `timezone.localtime` before taking the date.
 
 ## Pending sheet
 

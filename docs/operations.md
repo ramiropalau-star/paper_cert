@@ -4,6 +4,46 @@ All services run under `compose.yaml`. Only `app` (port `APP_PORT`, default
 8080) and `n8n` (port 5678) publish ports; `db`, `redis`, `paperless`,
 `ocr`, and `ollama` are reachable only on the internal `internal` network.
 
+### Service exposure
+
+Paperless-ngx is internal by default: the app reaches it at
+`http://paperless:8000` on the Docker network, so no host port is published.
+To administer the Paperless UI locally, opt in to a loopback-only mapping in
+`compose.yaml`:
+
+```yaml
+    ports:
+      - "127.0.0.1:9090:8000"
+```
+
+For remote administration use an SSH tunnel
+(`ssh -L 9090:127.0.0.1:9090 user@host`) or a reverse proxy — never publish
+`0.0.0.0:9090`.
+
+### Secrets and orchestration tokens
+
+`.env` holds every secret; `deploy.sh` generates random values on first
+deploy. Never commit `.env` or reuse the `change-me-*` placeholders outside
+local development.
+
+- `APP_INTERNAL_API_TOKEN` authenticates service-to-service calls to the
+  app's `/internal/` endpoints (`X-Internal-Token` header).
+- `APP_N8N_WEBHOOK_TOKEN` authenticates calls to the n8n orchestration
+  webhooks (`/webhook/process-document`, `/webhook/report-job`). The app
+  sends it as `X-Webhook-Token`; both bundled workflows reject requests
+  without a matching token with HTTP 401 before any stage runs. The same
+  value must be present in the app and n8n environments (both read `.env`).
+- `DJANGO_SECRET_KEY` must be a long random value; the app refuses to start
+  with the development default when `DEBUG=false`.
+
+### n8n cookie security
+
+`N8N_SECURE_COOKIE` must match the scheme operators use to reach the n8n
+UI. `deploy.sh` derives it from `N8N_PROTOCOL` (`https` → `true`,
+`http` → `false` plus a warning). For any non-local deployment put n8n
+behind a TLS-terminating reverse proxy, set `N8N_PROTOCOL=https`, and keep
+`N8N_SECURE_COOKIE=true`.
+
 ## Volumes
 
 | Volume | Contents |
@@ -14,6 +54,7 @@ All services run under `compose.yaml`. Only `app` (port `APP_PORT`, default
 | `ollama-models` | Downloaded Ollama models |
 | `app-media` | Staged uploads |
 | `reports` | Generated `.xlsx` workbooks |
+| `app-cache` | Django file-based cache (thumbnails) |
 
 ## Fresh start
 
@@ -95,6 +136,34 @@ curl -s http://localhost:8080/internal/healthz -H "X-Internal-Token: $APP_INTERN
 Documents stuck in `error` can be retried from the review UI
 (**Reprocesar**) or by replaying the n8n execution.
 
+### Stuck-work recovery
+
+The `watcher` service runs recovery every `APP_RECOVERY_INTERVAL_SECONDS`
+(default `60`, `0` disables the loop). A document or report job untouched for
+longer than `APP_RECOVERY_STALE_SECONDS` (default `1800`) is recovered:
+
+- Documents in `stored`, `text_ready`, or `extracted` are requeued through the
+  n8n pipeline; each attempt increments `recovery_attempts`.
+- Documents in `received` are moved to `error` with
+  `recovery_orphaned_received` because the staged upload no longer exists.
+- Report jobs in `queued`/`running` are retried locally via `run_report_job`;
+  each attempt increments `attempts`.
+- After `APP_RECOVERY_MAX_ATTEMPTS` (default `3`) a stale item moves to
+  `error` with `recovery_attempts_exhausted` and is no longer retried.
+
+Manual inspection and runs:
+
+```bash
+docker compose exec app python manage.py recover_stuck --dry-run   # list only
+docker compose exec app python manage.py recover_stuck             # real run
+docker compose exec app python manage.py recover_stuck --older-than 600 --max-attempts 5
+docker compose exec app python manage.py recover_stuck --documents-only
+```
+
+Recovery events are logged as `recovery_run`, `recovery_document_requeued`,
+`recovery_document_failed`, `recovery_report_retried`, and
+`recovery_report_failed` with `document_id`/`report_id` correlation fields.
+
 ## Smoke test
 
 `scripts/smoke.sh` exercises the full stack against the committed fixtures:
@@ -120,11 +189,52 @@ the same dedup → Paperless storage → n8n → review flow.
    service polls `APP_INBOX_DIR` (default every `APP_INBOX_POLL_SECONDS=10`s),
    ingests them through the normal pipeline, and moves them to
    `inbox/processed/` or `inbox/failed/`.
-3. **Paperless-ngx** — upload through the Paperless UI (`:9090`) or its
-   `consume` folder. A Paperless workflow fires a webhook on *Document
-   Added* to `POST /internal/paperless/webhook/` with header
+3. **Paperless-ngx** — upload through the Paperless UI (requires the
+   optional loopback port mapping above) or its `consume` folder. A
+   Paperless workflow fires a webhook on *Document Added* to
+   `POST /internal/paperless/webhook/` with header
    `X-Internal-Token`. The app downloads the original, deduplicates by
    SHA-256, creates the record already `stored`, and notifies n8n.
+
+### Paperless sync watermark and thumbnails
+
+The `watcher` service reconciles Paperless every
+`APP_PAPERLESS_SYNC_SECONDS` (default 60s). Instead of listing the whole
+archive each run, the sync persists a watermark in `PaperlessSyncState`
+(`documents_paperlesssyncstate` table) and requests only documents with
+`added__gte = last_added - APP_SYNC_OVERLAP_SECONDS` (default 600s). The
+first run after deploy — or any run when the watermark is empty — is a full
+listing.
+
+Watermark rules:
+
+- A successful listing with no ingest errors advances the watermark to the
+  newest `added` seen.
+- Ingest errors advance it only to the oldest failed document's `added`
+  minus the overlap, so the bad document is retried without hiding newer
+  ones.
+- A listing failure leaves the watermark unchanged.
+
+Manual commands:
+
+```bash
+# incremental run (same as the watcher)
+docker compose exec app python manage.py sync_paperless
+# full reconcile: ignores the watermark, repairs missing local documents
+docker compose exec app python manage.py sync_paperless --full
+```
+
+Run `sync_paperless --full` once after deploying this change to establish
+the baseline; the watcher then stays incremental. If a Paperless version
+rejects the `added__gte` filter (HTTP 400), the sync logs
+`sync_filter_unsupported` and falls back to a full listing automatically.
+
+Gallery thumbnails are cached in the Django cache
+(`APP_CACHE_DIR`, default `var/cache`; `/data/cache` volume in compose)
+under `thumbnail:{paperless_id}:{updated_at}` for 24 hours. A cache hit
+makes no Paperless call; a document update changes the key and refetches.
+On a Paperless failure the endpoint returns a placeholder SVG with HTTP
+200 so the gallery keeps working.
 
 ### Paperless webhook setup (automated in this deployment)
 

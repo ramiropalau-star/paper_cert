@@ -23,13 +23,15 @@ Defaults:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `APP_UPLOAD_MAX_BYTES` | `26214400` (25 MiB) | Maximum upload size. |
+| `APP_UPLOAD_MAX_BYTES` | `26214400` (25 MiB) | Maximum size per file. |
+| `APP_REQUEST_MAX_BYTES` | `104857600` (100 MiB) | Maximum total request body (all files combined). |
 | `APP_PDF_MAX_PAGES` | `100` | Maximum pages in a PDF. |
 | `APP_MEDIA_ROOT` | `/data/media` | Staging directory parent. |
 
-`core.middleware.RequestSizeLimitMiddleware` rejects oversized requests from
-`Content-Length` with HTTP 413 before the view runs. Intake validates the file
-again, so the limit is enforced for direct service calls too.
+`core.middleware.RequestSizeLimitMiddleware` rejects requests whose total
+`Content-Length` exceeds `APP_REQUEST_MAX_BYTES` with HTTP 413 before the
+view runs; the per-file `APP_UPLOAD_MAX_BYTES` cap stays in intake
+validation, so multi-file uploads are bounded by the total, not per file.
 
 ## Staging
 

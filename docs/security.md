@@ -66,9 +66,13 @@ Do not expose `/internal/` outside the internal Docker network.
 
 ## Upload and request limits
 
-- `APP_UPLOAD_MAX_BYTES` (default 25 MiB) is enforced by
-  `core.middleware.RequestSizeLimitMiddleware` from the request
+- `APP_REQUEST_MAX_BYTES` (default 100 MiB) bounds the whole request body;
+  `core.middleware.RequestSizeLimitMiddleware` enforces it from the request
   `Content-Length`, returning HTTP 413 before the view runs.
+- `APP_UPLOAD_MAX_BYTES` (default 25 MiB) is the per-file cap enforced by
+  intake validation (`validate_upload`), so a multi-file request is accepted
+  when each file is under the per-file cap and the combined body is under the
+  total cap.
 - `DATA_UPLOAD_MAX_MEMORY_SIZE` is 2 MiB as a secondary guard for non-file form
   data.
 - File type, magic bytes, page counts, and PDF parseability are validated in the

@@ -19,7 +19,18 @@ log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mWARN:\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
-env_val() { grep -E "^$1=" .env | head -1 | cut -d= -f2-; }
+env_val() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2-; }
+
+# Deriva N8N_SECURE_COOKIE del esquema público configurado (N8N_PROTOCOL).
+n8n_secure_cookie_value() {
+  local protocol
+  protocol=$(env_val N8N_PROTOCOL); protocol=${protocol:-http}
+  case "$protocol" in
+    https) echo true ;;
+    http)  echo false ;;
+    *) die "N8N_PROTOCOL inválido en .env: $protocol (usá http o https)" ;;
+  esac
+}
 
 # Pide un token nuevo a la API de Paperless y lo escribe en .env.
 # Se usa tanto en el primer deploy como para recuperarse de un token
@@ -84,6 +95,7 @@ if [ ! -f .env ] || [ "${FORCE_ENV:-0}" = "1" ]; then
   set_env APP_INTERNAL_API_TOKEN     "$(openssl rand -hex 32)"
   set_env APP_N8N_WEBHOOK_TOKEN      "$(openssl rand -hex 32)"
   set_env N8N_ENCRYPTION_KEY         "$(openssl rand -hex 32)"
+  set_env N8N_SECURE_COOKIE          "$(n8n_secure_cookie_value)"
   set_env DJANGO_SUPERUSER_USERNAME  admin
   set_env DJANGO_SUPERUSER_PASSWORD  "$ADMIN_PASS"
   set_env PAPERLESS_ADMIN_USER       admin
@@ -91,10 +103,25 @@ if [ ! -f .env ] || [ "${FORCE_ENV:-0}" = "1" ]; then
   set_env PAPERLESS_URL              "http://$HOST:9090"
   set_env APP_PAPERLESS_UI_URL       "http://$HOST:9090"
   set_env DJANGO_ALLOWED_HOSTS       "localhost,127.0.0.1,$HOST,app,watcher,n8n,paperless"
-  set_env DJANGO_CSRF_TRUSTED_ORIGINS "http://$HOST:8090,http://localhost:8090,http://127.0.0.1:8090"
+  APP_PORT=$(env_val APP_PORT); APP_PORT=${APP_PORT:-8080}
+  set_env DJANGO_CSRF_TRUSTED_ORIGINS "http://$HOST:$APP_PORT,http://localhost:$APP_PORT,http://127.0.0.1:$APP_PORT"
   set_env PAPERLESS_CSRF_TRUSTED_ORIGINS "http://$HOST:9090,http://localhost:9090,http://127.0.0.1:9090"
 else
   log ".env ya existe — se respeta (FORCE_ENV=1 para regenerar)"
+fi
+
+# Puerto publicado de la app: única fuente para health check y banner.
+# Default 8080, igual que .env.example y compose.yaml.
+APP_PORT=$(env_val APP_PORT); APP_PORT=${APP_PORT:-8080}
+
+# Secure cookies de n8n siguen el esquema público (N8N_PROTOCOL). En HTTP se
+# desactivan explícitamente y se avisa: para producción usar HTTPS.
+N8N_COOKIE_VALUE=$(n8n_secure_cookie_value)
+if [ "$N8N_COOKIE_VALUE" = "false" ]; then
+  warn "n8n se sirve por HTTP — secure cookies desactivadas; usá un reverse proxy HTTPS para despliegues no locales"
+fi
+if ! grep -q '^N8N_SECURE_COOKIE=' .env; then
+  echo "N8N_SECURE_COOKIE=$N8N_COOKIE_VALUE" >> .env
 fi
 mkdir -p inbox
 
@@ -240,7 +267,7 @@ done
 
 # --------------------------------------------------------------- verificación
 log "Verificación final"
-curl -fsS "http://localhost:${APP_PORT:-8090}/healthz" >/dev/null && echo "  Django healthz OK"
+curl -fsS "http://localhost:$APP_PORT/healthz" >/dev/null && echo "  Django healthz OK"
 # 'up -d' puede haber recreado Paperless; esperar healthy + reintentar el
 # provisioning porque la API puede tardar en aceptar tokens tras el boot.
 wait_paperless_healthy || die "Paperless no llegó a healthy"
@@ -262,7 +289,6 @@ done
 # Real credentials from .env for the final banner
 DJANGO_USER=$(env_val DJANGO_SUPERUSER_USERNAME); DJANGO_USER=${DJANGO_USER:-admin}
 PAPERLESS_USER=$(env_val PAPERLESS_ADMIN_USER); PAPERLESS_USER=${PAPERLESS_USER:-admin}
-APP_PORT_DISPLAY=$(env_val APP_PORT); APP_PORT_DISPLAY=${APP_PORT_DISPLAY:-8090}
 
 if [ "${SKIP_SMOKE:-0}" != "1" ]; then
   log "Smoke test end-to-end (puede tardar varios minutos por Ollama)"
@@ -273,7 +299,7 @@ cat <<EOF
 
 ============================================================
  Deploy completo.
-   Django app:     http://$HOST:$APP_PORT_DISPLAY   ($DJANGO_USER / ver .env)
+   Django app:     http://$HOST:$APP_PORT   ($DJANGO_USER / ver .env)
    Paperless UI:   http://$HOST:9090               ($PAPERLESS_USER / ver .env)
    n8n:            http://$HOST:5678
    Inbox folder:   ./inbox/  (copiá archivos ahí)

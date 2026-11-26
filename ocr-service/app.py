@@ -4,6 +4,7 @@ import asyncio
 import os
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -11,7 +12,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import Annotated
 
-import ocrmypdf
 import pypdfium2 as pdfium
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse
@@ -50,7 +50,8 @@ def _env_languages() -> tuple[str, ...]:
 
 @dataclass
 class Settings:
-    timeout_seconds: float = _env_float("OCR_TIMEOUT_SECONDS", 120.0)
+    page_timeout_seconds: float = _env_float("OCR_PAGE_TIMEOUT_SECONDS", 60.0)
+    request_timeout_seconds: float = _env_float("OCR_REQUEST_TIMEOUT_SECONDS", 600.0)
     page_limit: int = _env_int("OCR_PAGE_LIMIT", 100)
     min_text_chars: int = _env_int("OCR_MIN_TEXT_CHARS", 20)
     low_confidence_threshold: float = _env_float("OCR_LOW_CONFIDENCE_THRESHOLD", 0.55)
@@ -99,8 +100,7 @@ def _version(command: tuple[str, ...]) -> str:
 @lru_cache
 def engine_info() -> dict:
     return {
-        "name": "ocrmypdf+tesseract",
-        "ocrmypdf": _version(("ocrmypdf", "--version")),
+        "name": "tesseract",
         "tesseract": _version(("tesseract", "--version")),
     }
 
@@ -143,7 +143,10 @@ def _parse_tsv(output: str) -> tuple[str, float]:
 
 
 def run_tesseract_tsv(
-    image_path: Path, languages: tuple[str, ...], timeout: float
+    image_path: Path,
+    languages: tuple[str, ...],
+    timeout: float,
+    page_number: int | None = None,
 ) -> tuple[str, float]:
     command = [
         "tesseract",
@@ -160,8 +163,12 @@ def run_tesseract_tsv(
             command, capture_output=True, text=True, timeout=timeout, check=True
         )
     except subprocess.TimeoutExpired as exc:
+        where = f" on page {page_number}" if page_number is not None else ""
         raise OcrFailure(
-            "timeout", "OCR exceeded the configured timeout", status_code=504, retryable=True
+            "page_timeout",
+            f"OCR exceeded the per-page timeout{where}",
+            status_code=504,
+            retryable=True,
         ) from exc
     except (OSError, subprocess.CalledProcessError) as exc:
         raise OcrFailure("unreadable", "Tesseract could not read the input") from exc
@@ -204,10 +211,22 @@ def _result(pages: list[dict]) -> dict:
     }
 
 
+def _remaining_time(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise OcrFailure(
+            "request_timeout",
+            "OCR request exceeded the total timeout",
+            status_code=504,
+            retryable=True,
+        )
+    return remaining
+
+
 def process_pdf(data: bytes, languages: tuple[str, ...], page_limit: int) -> dict:
+    deadline = time.monotonic() + settings.request_timeout_seconds
     with tempfile.TemporaryDirectory(prefix="ocr-pdf-") as temp_dir:
         input_path = Path(temp_dir) / "input.pdf"
-        output_path = Path(temp_dir) / "output.pdf"
         input_path.write_bytes(data)
 
         try:
@@ -231,36 +250,20 @@ def process_pdf(data: bytes, languages: tuple[str, ...], page_limit: int) -> dic
             ]
             return _result(pages)
 
-        try:
-            ocrmypdf.ocr(
-                str(input_path),
-                str(output_path),
-                language=tesseract_language_arg(languages),
-                skip_text=True,
-                optimize=0,
-                jobs=1,
-                progress_bar=False,
-            )
-        except Exception as exc:
-            raise OcrFailure("unreadable", f"OCR failed: {exc}") from exc
-
-        try:
-            ocr_texts = [page.extract_text() or "" for page in PdfReader(str(output_path)).pages]
-        except Exception as exc:
-            raise OcrFailure("unreadable", "The OCR output could not be parsed") from exc
-
         pages: list[dict] = []
-        for index, (original, ocr_text) in enumerate(zip(original_texts, ocr_texts, strict=False)):
+        for index, original in enumerate(original_texts):
             if len(original.strip()) >= settings.min_text_chars:
                 pages.append(_page(index + 1, original, "embedded", 1.0))
                 continue
             page_image = Path(temp_dir) / f"page-{index + 1}.png"
-            render_pdf_page(output_path, index, page_image)
+            render_pdf_page(input_path, index, page_image)
             tesseract_text, confidence = run_tesseract_tsv(
-                page_image, languages, settings.timeout_seconds
+                page_image,
+                languages,
+                min(settings.page_timeout_seconds, _remaining_time(deadline)),
+                page_number=index + 1,
             )
-            final_text = ocr_text.strip() or tesseract_text
-            pages.append(_page(index + 1, final_text, "ocr", confidence))
+            pages.append(_page(index + 1, tesseract_text, "ocr", confidence))
 
         if len("\n".join(page["text"] for page in pages).strip()) < settings.min_text_chars:
             raise OcrFailure("no_text", "OCR produced too little usable text")
@@ -282,12 +285,18 @@ def process_image(data: bytes, languages: tuple[str, ...], page_limit: int) -> d
             f"Image has {len(frames)} frames; the limit is {page_limit}",
         )
 
+    deadline = time.monotonic() + settings.request_timeout_seconds
     pages: list[dict] = []
     with tempfile.TemporaryDirectory(prefix="ocr-image-") as temp_dir:
         for index, frame in enumerate(frames):
             image_path = Path(temp_dir) / f"page-{index + 1}.png"
             frame.save(image_path, format="PNG")
-            text, confidence = run_tesseract_tsv(image_path, languages, settings.timeout_seconds)
+            text, confidence = run_tesseract_tsv(
+                image_path,
+                languages,
+                min(settings.page_timeout_seconds, _remaining_time(deadline)),
+                page_number=index + 1,
+            )
             pages.append(_page(index + 1, text, "ocr", confidence))
 
     if len("\n".join(page["text"] for page in pages).strip()) < settings.min_text_chars:
@@ -314,8 +323,17 @@ def process_document_bytes(
     suffix = Path(filename or "").suffix.lower()
     is_pdf = suffix == ".pdf" or content_type == "application/pdf"
     allowed_images = {
-        ".jpg", ".jpeg", ".png", ".tif", ".tiff",
-        ".webp", ".bmp", ".gif", ".heic", ".heif", ".avif",
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".tif",
+        ".tiff",
+        ".webp",
+        ".bmp",
+        ".gif",
+        ".heic",
+        ".heif",
+        ".avif",
     }
     if not is_pdf and suffix not in allowed_images and not content_type.startswith("image/"):
         raise OcrFailure(
@@ -333,7 +351,7 @@ app = FastAPI(title="Certificate OCR service", version=CONTRACT_VERSION)
 @app.get("/health")
 def health() -> JSONResponse:
     info = engine_info()
-    healthy = info["ocrmypdf"] != "unavailable" and info["tesseract"] != "unavailable"
+    healthy = info["tesseract"] != "unavailable"
     return JSONResponse(
         {
             "status": "healthy" if healthy else "degraded",
@@ -364,13 +382,16 @@ async def ocr_endpoint(
                 selected_languages,
                 limit,
             ),
-            timeout=settings.timeout_seconds,
+            timeout=settings.request_timeout_seconds,
         )
     except OcrFailure as exc:
         return JSONResponse(exc.payload(), status_code=exc.status_code)
     except TimeoutError:
         failure = OcrFailure(
-            "timeout", "OCR exceeded the configured timeout", status_code=504, retryable=True
+            "request_timeout",
+            "OCR exceeded the total request timeout",
+            status_code=504,
+            retryable=True,
         )
         return JSONResponse(failure.payload(), status_code=failure.status_code)
     return JSONResponse(result)

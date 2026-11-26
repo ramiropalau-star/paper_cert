@@ -14,10 +14,13 @@ Django 5 + PostgreSQL + Paperless-ngx (document store) + Ollama (extraction)
 
 ```bash
 cp .env.example .env
-# edit .env: set DJANGO_SECRET_KEY, DB_PASSWORD, PAPERLESS_DB_PASSWORD,
-# N8N_DB_PASSWORD, APP_INTERNAL_API_TOKEN, PAPERLESS_SECRET_KEY,
-# PAPERLESS_ADMIN_PASSWORD, N8N_ENCRYPTION_KEY, DJANGO_SUPERUSER_PASSWORD
+# edit .env: replace every change-me-* value (deploy.sh generates random
+# secrets on first deploy) and set N8N_PROTOCOL to the public scheme of the
+# n8n UI (http locally, https behind a reverse proxy)
 
+./deploy.sh   # one-shot: env, build, bootstrap, workflows, smoke test
+
+# Manual equivalent:
 docker compose up -d db redis
 docker compose run --rm app python manage.py bootstrap
 docker compose up -d

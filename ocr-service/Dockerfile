@@ -6,8 +6,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ghostscript \
-        qpdf \
         tesseract-ocr \
         tesseract-ocr-eng \
         tesseract-ocr-spa \

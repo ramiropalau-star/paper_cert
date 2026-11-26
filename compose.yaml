@@ -60,11 +60,12 @@ services:
       - paperless-data:/usr/src/paperless/data
       - paperless-media:/usr/src/paperless/media
       - paperless-consume:/usr/src/paperless/consume
-    # Optional: expose the Paperless UI to operators. Keep commented for the
-    # default hardened topology; uncomment and set APP_PAPERLESS_UI_URL
-    # accordingly when direct browser access is needed.
-    ports:
-      - "9090:8000"
+    # La UI de Paperless no se publica por defecto: la app la alcanza por la
+    # red interna (APP_PAPERLESS_URL=http://paperless:8000). Para administración
+    # local, publicar solo en loopback:
+    #   ports:
+    #     - "127.0.0.1:9090:8000"
+    # y para acceso remoto usar un túnel SSH o un reverse proxy.
     networks: [internal]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/ >/dev/null || exit 1"]
@@ -128,6 +129,7 @@ services:
     environment:
       APP_MEDIA_ROOT: /data/media
       APP_REPORT_OUTPUT_DIR: /data/reports
+      APP_CACHE_DIR: /data/cache
       APP_PORT: ${APP_PORT:-8080}
       DB_HOST: db
     ports:
@@ -135,6 +137,7 @@ services:
     volumes:
       - app-media:/data/media
       - reports:/data/reports
+      - app-cache:/data/cache
     networks: [internal]
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')\""]
@@ -163,6 +166,7 @@ services:
       APP_INBOX_POLL_SECONDS: ${APP_INBOX_POLL_SECONDS:-10}
       APP_MEDIA_ROOT: /data/media
       APP_REPORT_OUTPUT_DIR: /data/reports
+      APP_CACHE_DIR: /tmp/cache
       DB_HOST: db
     command: ["python", "manage.py", "watch_inbox"]
     volumes:
@@ -195,11 +199,12 @@ services:
       DB_POSTGRESDB_USER: paperless
       DB_POSTGRESDB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY in .env}
-      N8N_SECURE_COOKIE: "true"
+      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-true}
       GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-UTC}
       N8N_RUNNERS_ENABLED: "true"
       APP_INTERNAL_API_TOKEN: ${APP_INTERNAL_API_TOKEN}
       APP_INTERNAL_URL: http://app:8000
+      APP_N8N_WEBHOOK_TOKEN: ${APP_N8N_WEBHOOK_TOKEN:?Set APP_N8N_WEBHOOK_TOKEN in .env}
     ports:
       - "5678:5678"
     volumes:
@@ -228,3 +233,4 @@ volumes:
   ollama-models:
   app-media:
   reports:
+  app-cache:
