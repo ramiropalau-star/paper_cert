@@ -278,3 +278,12 @@ body {
 }
 .panel fieldset { border: 1px solid var(--border); border-radius: 6px; margin: 0.75rem 0; }
 .panel fieldset legend { font-size: 0.9rem; color: var(--muted); padding: 0 0.4rem; }
+
+.dropzone {
+  border: 2px dashed var(--border); border-radius: 8px;
+  padding: 1.5rem 1rem; margin: 0.75rem 0; text-align: center;
+  color: var(--muted); transition: border-color 0.15s, background 0.15s;
+}
+.dropzone.dragover { border-color: var(--accent); background: #f0f6ff; color: var(--accent); }
+.dropzone .file-list { margin-top: 0.75rem; text-align: left; font-size: 0.9rem; }
+.dropzone .file-list li { padding: 0.15rem 0; }

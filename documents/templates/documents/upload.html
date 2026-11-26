@@ -3,9 +3,13 @@
 {% block content %}
   <section class="panel narrow">
     <h1>Subir certificado</h1>
-    <p>Aceptamos PDF e imágenes (JPG, PNG, TIFF, WebP, BMP, GIF, HEIC, HEIF, AVIF). Podés seleccionar varios archivos a la vez. El tipo de archivo se detecta por su contenido, aunque no tenga extensión. El archivo se valida antes de procesarse.</p>
-    <form method="post" enctype="multipart/form-data">
+    <p>Aceptamos PDF e imágenes (JPG, PNG, TIFF, WebP, BMP, GIF, HEIC, HEIF, AVIF). Podés seleccionar varios archivos a la vez o arrastrarlos y soltarlos en el recuadro. El tipo de archivo se detecta por su contenido, aunque no tenga extensión. El archivo se valida antes de procesarse.</p>
+    <form id="upload-form" method="post" enctype="multipart/form-data">
       {% csrf_token %}
+      <div id="dropzone" class="dropzone">
+        Arrastrá los archivos acá para subirlos
+        <ul id="file-list" class="file-list"></ul>
+      </div>
       <p>
         <label for="document">Archivos</label>
         <input id="document" name="document" type="file" multiple
@@ -15,4 +19,62 @@
       <button type="submit" class="button">Subir</button>
     </form>
   </section>
+  <script>
+    (function () {
+      var input = document.getElementById('document');
+      var form = document.getElementById('upload-form');
+      var zone = document.getElementById('dropzone');
+      var list = document.getElementById('file-list');
+      var depth = 0;
+
+      function renderFiles() {
+        list.innerHTML = '';
+        Array.prototype.forEach.call(input.files, function (file) {
+          var li = document.createElement('li');
+          li.textContent = file.name + ' (' + Math.ceil(file.size / 1024) + ' KB)';
+          list.appendChild(li);
+        });
+      }
+
+      function setFiles(files) {
+        var dt = new DataTransfer();
+        Array.prototype.forEach.call(files, function (file) { dt.items.add(file); });
+        input.files = dt.files;
+        input.required = false;
+        renderFiles();
+        form.submit();
+      }
+
+      input.addEventListener('change', renderFiles);
+
+      zone.addEventListener('dragenter', function (e) {
+        e.preventDefault();
+        depth++;
+        zone.classList.add('dragover');
+      });
+      zone.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        zone.classList.add('dragover');
+      });
+      zone.addEventListener('dragleave', function (e) {
+        e.preventDefault();
+        depth = Math.max(0, depth - 1);
+        if (depth === 0) zone.classList.remove('dragover');
+      });
+      zone.addEventListener('drop', function (e) {
+        e.preventDefault();
+        depth = 0;
+        zone.classList.remove('dragover');
+        if (e.dataTransfer && e.dataTransfer.files.length) {
+          setFiles(e.dataTransfer.files);
+        }
+      });
+
+      // Prevent the browser from navigating away when files are dropped
+      // outside the dropzone.
+      ['dragover', 'drop'].forEach(function (event) {
+        document.addEventListener(event, function (e) { e.preventDefault(); });
+      });
+    })();
+  </script>
 {% endblock %}
