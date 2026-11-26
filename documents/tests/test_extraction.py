@@ -563,26 +563,26 @@ def test_out_of_range_confidence_is_rejected_and_repaired():
     assert "confidence" in repair
 
 
-def test_unsupported_evidence_quote_is_rejected_and_repaired():
+def test_unsupported_evidence_quote_is_kept_unverified_without_repair():
     document = make_document()
     add_page(document, 1, PAGE_TEXT)
     bad = payload_dict()
     bad["student_name"] = field("Ada Lovelace", quote="not on this page")
-    llm = FakeLlm([json.dumps(bad), json.dumps(payload_dict())])
+    llm = FakeLlm([json.dumps(bad)])
 
     result = extract_certificate(document, llm=llm, store=FakeStore())
 
     assert result.state == Document.ProcessingState.EXTRACTED
-    assert len(llm.calls) == 2
-    repair = llm.calls[1]["messages"][-1]["content"]
-    assert "evidence" in repair
+    assert len(llm.calls) == 1
+    certificate = Certificate.objects.get(document=document)
+    assert "student_name" in certificate.unverified_fields
 
 
 def test_repair_exhaustion_routes_to_review_with_invalid_extraction():
     document = make_document()
     add_page(document, 1, PAGE_TEXT)
     bad = payload_dict()
-    bad["student_name"] = field("Ada Lovelace", quote="fabricated quote")
+    bad["confidence"] = 1.5
     llm = FakeLlm([json.dumps(bad)] * 3)
 
     result = extract_certificate(document, llm=llm, store=FakeStore())
@@ -619,13 +619,23 @@ def test_invalid_date_evidence_is_dropped_not_fatal():
     assert payload.dates[0].text == "12 May 2024"
 
 
-def test_invalid_literal_evidence_still_fails():
+def test_invalid_literal_evidence_marks_field_unverified():
     payload = ExtractionPayload.model_validate(
         payload_dict(student_name=field("Ada Lovelace", quote="missing quote"))
     )
 
-    with pytest.raises(ValueError, match="student_name"):
-        _validate_evidence(payload, {1: PAGE_TEXT})
+    unverified = _validate_evidence(payload, {1: PAGE_TEXT})
+
+    assert unverified == {"student_name"}
+    assert payload.student_name.value == "Ada Lovelace"
+
+
+def test_valid_literal_evidence_is_not_unverified():
+    payload = ExtractionPayload.model_validate(payload_dict())
+
+    unverified = _validate_evidence(payload, {1: PAGE_TEXT})
+
+    assert unverified == set()
 
 
 def test_empty_student_name_uses_label_fallback():
@@ -672,3 +682,96 @@ def test_student_name_fallback_rejects_boilerplate():
     assert result.state == Document.ProcessingState.EXTRACTED
     certificate = Certificate.objects.get(document=document)
     assert certificate.student_name == ""
+
+
+def test_bad_literal_evidence_keeps_value_marked_unverified():
+    document = make_document()
+    add_page(document, 1, PAGE_TEXT)
+    data = payload_dict(student_name=field("Ada Lovelace", quote="missing quote"))
+    llm = FakeLlm([json.dumps(data)])
+
+    result = extract_certificate(document, llm=llm, store=FakeStore())
+
+    assert result.state == Document.ProcessingState.EXTRACTED
+    certificate = Certificate.objects.get(document=document)
+    assert certificate.student_name == "Ada Lovelace"
+    assert "student_name" in certificate.unverified_fields
+
+
+def test_score_fallback_fills_empty_score():
+    document = make_document()
+    add_page(document, 1, PAGE_TEXT + "\nOverall Score\n80 /100\n")
+    data = payload_dict(
+        score={"value": None, "evidence": None, "confidence": None}
+    )
+    llm = FakeLlm([json.dumps(data)])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    certificate = Certificate.objects.get(document=document)
+    assert certificate.score_literal == "80 /100"
+    assert "score_literal" in certificate.unverified_fields
+
+
+def test_issue_date_fallback_fills_empty_dates():
+    document = make_document()
+    add_page(document, 1, "Cambridge English B2 First CERT-123 English quote text\nDate of issue: 5 May 2024")
+    data = payload_dict(dates=[])
+    llm = FakeLlm([json.dumps(data)])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    certificate = Certificate.objects.get(document=document)
+    candidates = certificate.date_texts["candidates"]
+    assert any(c["role"] == "issue" and "5 May 2024" in c["text"] for c in candidates)
+    assert "issue_date" in certificate.unverified_fields
+
+
+def test_second_pass_recovers_missing_score_and_date():
+    document = make_document()
+    add_page(document, 1, "Cambridge English B2 First CERT-123 English quote text")
+    primary = payload_dict(
+        score={"value": None, "evidence": None, "confidence": None},
+        dates=[],
+    )
+    focused = payload_dict(
+        score=field("99", quote="quote"),
+        dates=[{"text": "12 May 2024", "role": "issue", "page": 1, "quote": "quote"}],
+    )
+    llm = FakeLlm([json.dumps(primary), json.dumps(focused)])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    assert len(llm.calls) == 2
+    assert "missed" in llm.calls[1]["messages"][1]["content"]
+    certificate = Certificate.objects.get(document=document)
+    assert certificate.score_literal == "99"
+    assert certificate.date_texts["candidates"]
+
+
+def test_second_pass_skipped_when_fields_present():
+    document = make_document()
+    add_page(document, 1, PAGE_TEXT)
+    llm = FakeLlm([json.dumps(payload_dict())])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    assert len(llm.calls) == 1
+
+
+def test_unverified_marks_excluded_for_manual_fields():
+    document = make_document()
+    add_page(document, 1, PAGE_TEXT)
+    Certificate.objects.create(
+        document=document,
+        student_name="Manual Name",
+        manual_fields=["student_name"],
+    )
+    data = payload_dict(student_name=field("Ada Lovelace", quote="missing quote"))
+    llm = FakeLlm([json.dumps(data)])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    certificate = Certificate.objects.get(document=document)
+    assert certificate.student_name == "Manual Name"
+    assert "student_name" not in certificate.unverified_fields

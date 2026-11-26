@@ -54,53 +54,98 @@
           <option value="pending" {% if catalog == "pending" %}selected{% endif %}>Pendiente de catálogo</option>
         </select>
       </p>
+      <p>
+        <label for="f-unverified">Verificación</label>
+        <select id="f-unverified" name="unverified">
+          <option value="">Todas</option>
+          <option value="1" {% if unverified %}selected{% endif %}>Con campos sin verificar</option>
+        </select>
+      </p>
       <button type="submit" class="button">Filtrar</button>
       <a href="{% url 'documents:list' %}">Limpiar</a>
     </form>
 
-    <table class="data-table">
+    <div class="table-toolbar">
+      <label for="page-size">Filas por página
+        <select id="page-size">
+          <option value="10">10</option>
+          <option value="25">25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+          <option value="0">Todas</option>
+        </select>
+      </label>
+      <span id="visible-count" class="muted"></span>
+    </div>
+
+    <table class="data-table" id="docs-table">
       <thead>
         <tr>
-          <th>Archivo</th>
-          <th>NPA</th>
-          <th>Alumno</th>
-          <th>Idioma</th>
-          <th>Entidad</th>
-          <th>Examen</th>
-          <th>Puntuación</th>
-          <th>Nivel</th>
-          <th>Equiv. UV</th>
-          <th>Fecha expedición</th>
-          <th>Organismo emisor</th>
-          <th>Estado</th>
-          <th>Subido</th>
+          <th class="col-preview"></th>
+          <th data-sort="text">Archivo</th>
+          <th data-sort="text">NPA</th>
+          <th data-sort="text">Alumno</th>
+          <th data-sort="text">Idioma</th>
+          <th data-sort="text">Entidad</th>
+          <th data-sort="text">Examen</th>
+          <th data-sort="text">Puntuación</th>
+          <th data-sort="text">Nivel</th>
+          <th data-sort="text">Equiv. UV</th>
+          <th data-sort="text">Fecha expedición</th>
+          <th data-sort="text">Organismo emisor</th>
+          <th data-sort="text">Estado</th>
+          <th data-sort="text">Subido</th>
+        </tr>
+        <tr class="col-filters">
+          <td></td>
+          <td><input type="search" data-col-filter="1" placeholder="Filtrar…" aria-label="Filtrar por Archivo"></td>
+          <td><input type="search" data-col-filter="2" placeholder="Filtrar…" aria-label="Filtrar por NPA"></td>
+          <td><input type="search" data-col-filter="3" placeholder="Filtrar…" aria-label="Filtrar por Alumno"></td>
+          <td><input type="search" data-col-filter="4" placeholder="Filtrar…" aria-label="Filtrar por Idioma"></td>
+          <td><input type="search" data-col-filter="5" placeholder="Filtrar…" aria-label="Filtrar por Entidad"></td>
+          <td><input type="search" data-col-filter="6" placeholder="Filtrar…" aria-label="Filtrar por Examen"></td>
+          <td><input type="search" data-col-filter="7" placeholder="Filtrar…" aria-label="Filtrar por Puntuación"></td>
+          <td><input type="search" data-col-filter="8" placeholder="Filtrar…" aria-label="Filtrar por Nivel"></td>
+          <td><input type="search" data-col-filter="9" placeholder="Filtrar…" aria-label="Filtrar por Equiv. UV"></td>
+          <td><input type="search" data-col-filter="10" placeholder="Filtrar…" aria-label="Filtrar por Fecha expedición"></td>
+          <td><input type="search" data-col-filter="11" placeholder="Filtrar…" aria-label="Filtrar por Organismo emisor"></td>
+          <td><input type="search" data-col-filter="12" placeholder="Filtrar…" aria-label="Filtrar por Estado"></td>
+          <td><input type="search" data-col-filter="13" placeholder="Filtrar…" aria-label="Filtrar por Subido"></td>
         </tr>
       </thead>
-      <tbody>
+      <tbody id="docs-tbody">
         {% for document in page %}
           {% with certificate=document.certificate %}
           <tr>
+            <td class="col-preview">
+              {% if document.paperless_document_id %}
+                <button type="button" class="icon-btn preview-btn"
+                        data-url="{% url 'documents:original' document.pk %}"
+                        data-name="{{ document.original_filename }}"
+                        title="Vista previa" aria-label="Vista previa de {{ document.original_filename }}">👁</button>
+              {% endif %}
+            </td>
             <td>
               <a href="{% url 'documents:detail' document.pk %}">{{ document.original_filename }}</a>
               {% if document.catalog_pending %}<span class="catalog-badge" title="Literales sin resolver en el catálogo">Catálogo pendiente</span>{% endif %}
             </td>
             <td>{{ document.npa|default:"—" }}</td>
             {% if certificate %}
-              <td>{{ certificate.student_name|default:"—" }}</td>
-              <td>{{ certificate.language.name|default:certificate.language_literal|default:"—" }}</td>
-              <td>{{ certificate.entity.name|default:certificate.entity_literal|default:"—" }}</td>
-              <td>{{ certificate.exam.name|default:certificate.exam_literal|default:"—" }}</td>
-              <td>{{ certificate.score_literal|default:"—" }}</td>
-              <td>{{ certificate.cefr_level|default:certificate.level_literal|default:"—" }}</td>
-              <td class="has-tip" data-tip="{{ certificate.equivalence_tip }}">
+              <td>{{ certificate.student_name|default:"—" }}{% if "student_name" in certificate.unverified_fields %} <span class="unverified-badge" title="Sin evidencia verificable">?</span>{% endif %}</td>
+              <td>{{ certificate.language.name|default:certificate.language_literal|default:"—" }}{% if "language_literal" in certificate.unverified_fields %} <span class="unverified-badge" title="Sin evidencia verificable">?</span>{% endif %}</td>
+              <td>{{ certificate.entity.name|default:certificate.entity_literal|default:"—" }}{% if "entity_literal" in certificate.unverified_fields %} <span class="unverified-badge" title="Sin evidencia verificable">?</span>{% endif %}</td>
+              <td>{{ certificate.exam.name|default:certificate.exam_literal|default:"—" }}{% if "exam_literal" in certificate.unverified_fields %} <span class="unverified-badge" title="Sin evidencia verificable">?</span>{% endif %}</td>
+              <td>{{ certificate.score_literal|default:"—" }}{% if "score_literal" in certificate.unverified_fields %} <span class="unverified-badge" title="Sin evidencia verificable">?</span>{% endif %}</td>
+              <td>{{ certificate.cefr_level|default:certificate.level_literal|default:"—" }}{% if "level_literal" in certificate.unverified_fields %} <span class="unverified-badge" title="Sin evidencia verificable">?</span>{% endif %}</td>
+              <td>
                 {% if certificate.equivalence_rule_pk %}
                   <a href="{% url 'catalog:equivalences' %}#eq-{{ certificate.equivalence_rule_pk }}">{{ certificate.equivalence }}</a>
                 {% else %}
                   {{ certificate.equivalence|default:"—" }}
                 {% endif %}
               </td>
-              <td>{{ certificate.issue_date|date:"Y-m-d"|default:"—" }}</td>
-              <td>{{ certificate.issuing_body_literal|default:"—" }}</td>
+              <td>{{ certificate.issue_date|date:"Y-m-d"|default:"—" }}{% if "issue_date" in certificate.unverified_fields %} <span class="unverified-badge" title="Sin evidencia verificable">?</span>{% endif %}</td>
+              <td>{{ certificate.issuing_body_literal|default:"—" }}{% if "issuing_body_literal" in certificate.unverified_fields %} <span class="unverified-badge" title="Sin evidencia verificable">?</span>{% endif %}</td>
             {% else %}
               <td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td>
             {% endif %}
@@ -115,10 +160,16 @@
           </tr>
           {% endwith %}
         {% empty %}
-          <tr><td colspan="13">No hay documentos para los filtros seleccionados.</td></tr>
+          <tr data-empty><td colspan="14">No hay documentos para los filtros seleccionados.</td></tr>
         {% endfor %}
       </tbody>
     </table>
+
+    <div class="table-pager" id="table-pager" hidden>
+      <button type="button" class="button" id="page-prev">← Anterior</button>
+      <span id="page-info"></span>
+      <button type="button" class="button" id="page-next">Siguiente →</button>
+    </div>
 
     {% if page.has_other_pages %}
       <nav class="pagination">
@@ -127,6 +178,17 @@
         {% if page.has_next %}<a href="?page={{ page.next_page_number }}{% for key, value in request.GET.items %}{% if key != 'page' %}&{{ key }}={{ value }}{% endif %}{% endfor %}">Siguiente →</a>{% endif %}
       </nav>
     {% endif %}
+
+    <div class="lightbox" id="lightbox" hidden>
+      <div class="lightbox-backdrop" data-close></div>
+      <div class="lightbox-body">
+        <div class="lightbox-header">
+          <span id="lightbox-name"></span>
+          <button type="button" class="button" data-close>Cerrar</button>
+        </div>
+        <iframe id="lightbox-frame" title="Documento"></iframe>
+      </div>
+    </div>
 
     <p>
       <a class="button" href="{% url 'documents:upload' %}">Subir certificado</a>
@@ -137,4 +199,153 @@
       {% endif %}
     </p>
   </section>
+
+  <script>
+  (function () {
+    var table = document.getElementById("docs-table");
+    var tbody = document.getElementById("docs-tbody");
+    if (!table || !tbody) return;
+
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr:not([data-empty])"));
+    var state = { sortCol: -1, sortDir: 1, page: 1, pageSize: 10 };
+    try {
+      var saved = sessionStorage.getItem("docs-page-size");
+      if (saved !== null) state.pageSize = parseInt(saved, 10) || 0;
+    } catch (e) {}
+    var sizeSelect = document.getElementById("page-size");
+    if (sizeSelect) sizeSelect.value = String(state.pageSize);
+
+    function cellText(row, col) {
+      var cell = row.children[col];
+      return cell ? cell.textContent.trim() : "";
+    }
+
+    function applyFilters() {
+      var inputs = table.querySelectorAll("[data-col-filter]");
+      inputs.forEach(function (input) {
+        var col = parseInt(input.dataset.colFilter, 10);
+        var needle = input.value.trim().toLowerCase();
+        rows.forEach(function (row) {
+          var text = cellText(row, col).toLowerCase();
+          row.dataset.filterHide = needle && text.indexOf(needle) === -1 ? "1" : "";
+        });
+      });
+      render();
+    }
+
+    function applySort() {
+      if (state.sortCol < 0) return;
+      var col = state.sortCol, dir = state.sortDir;
+      rows.sort(function (a, b) {
+        var ta = cellText(a, col), tb = cellText(b, col);
+        var na = parseFloat(ta.replace(",", ".")), nb = parseFloat(tb.replace(",", "."));
+        var cmp;
+        if (!isNaN(na) && !isNaN(nb) && ta !== "" && tb !== "") {
+          cmp = na - nb;
+        } else {
+          cmp = ta.localeCompare(tb, "es", { numeric: true, sensitivity: "base" });
+        }
+        return cmp * dir;
+      });
+      rows.forEach(function (row) { tbody.appendChild(row); });
+    }
+
+    function visibleRows() {
+      return rows.filter(function (row) { return !row.dataset.filterHide; });
+    }
+
+    function render() {
+      var vis = visibleRows();
+      var size = state.pageSize > 0 ? state.pageSize : vis.length;
+      var pages = Math.max(1, Math.ceil(vis.length / size));
+      if (state.page > pages) state.page = pages;
+      var start = (state.page - 1) * size;
+      var shown = vis.slice(start, start + size);
+
+      rows.forEach(function (row) {
+        row.style.display = shown.indexOf(row) !== -1 ? "" : "none";
+      });
+      var empty = tbody.querySelector("tr[data-empty]");
+      if (empty) empty.style.display = vis.length ? "none" : "";
+
+      var count = document.getElementById("visible-count");
+      if (count) count.textContent = vis.length + " de " + rows.length + " documentos";
+
+      var pager = document.getElementById("table-pager");
+      if (pager) {
+        pager.hidden = pages <= 1;
+        document.getElementById("page-info").textContent =
+          "Página " + state.page + " de " + pages;
+        document.getElementById("page-prev").disabled = state.page <= 1;
+        document.getElementById("page-next").disabled = state.page >= pages;
+      }
+    }
+
+    table.querySelectorAll("thead th[data-sort]").forEach(function (th) {
+      th.classList.add("sortable");
+      th.addEventListener("click", function () {
+        var col = Array.prototype.indexOf.call(th.parentNode.children, th);
+        if (state.sortCol === col) {
+          state.sortDir = -state.sortDir;
+        } else {
+          state.sortCol = col;
+          state.sortDir = 1;
+        }
+        table.querySelectorAll("thead th[data-sort]").forEach(function (h) {
+          h.classList.remove("sort-asc", "sort-desc");
+        });
+        th.classList.add(state.sortDir === 1 ? "sort-asc" : "sort-desc");
+        applySort();
+        state.page = 1;
+        render();
+      });
+    });
+
+    table.querySelectorAll("[data-col-filter]").forEach(function (input) {
+      input.addEventListener("input", function () {
+        state.page = 1;
+        applyFilters();
+      });
+    });
+
+    if (sizeSelect) {
+      sizeSelect.addEventListener("change", function () {
+        state.pageSize = parseInt(sizeSelect.value, 10) || 0;
+        state.page = 1;
+        try { sessionStorage.setItem("docs-page-size", sizeSelect.value); } catch (e) {}
+        render();
+      });
+    }
+
+    document.getElementById("page-prev").addEventListener("click", function () {
+      if (state.page > 1) { state.page--; render(); }
+    });
+    document.getElementById("page-next").addEventListener("click", function () {
+      state.page++; render();
+    });
+
+    var lightbox = document.getElementById("lightbox");
+    var frame = document.getElementById("lightbox-frame");
+    var name = document.getElementById("lightbox-name");
+    function closeLightbox() {
+      lightbox.hidden = true;
+      frame.removeAttribute("src");
+    }
+    table.querySelectorAll(".preview-btn").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        name.textContent = btn.dataset.name;
+        frame.src = btn.dataset.url;
+        lightbox.hidden = false;
+      });
+    });
+    lightbox.querySelectorAll("[data-close]").forEach(function (el) {
+      el.addEventListener("click", closeLightbox);
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && !lightbox.hidden) closeLightbox();
+    });
+
+    render();
+  })();
+  </script>
 {% endblock %}

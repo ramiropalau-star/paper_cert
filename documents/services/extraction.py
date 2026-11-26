@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -311,7 +312,11 @@ def _fail(
     )
 
 
-def _persist_certificate(document: Document, payload: ExtractionPayload) -> Certificate:
+def _persist_certificate(
+    document: Document,
+    payload: ExtractionPayload,
+    unverified_fields: set[str] | None = None,
+) -> Certificate:
     evidence: dict[str, Any] = {}
     field_confidence: dict[str, float] = {}
     defaults: dict[str, Any] = {
@@ -345,11 +350,15 @@ def _persist_certificate(document: Document, payload: ExtractionPayload) -> Cert
     defaults["field_confidence"] = field_confidence
 
     existing = Certificate.objects.filter(document=document).first()
+    manual: set[str] = set()
     if existing is not None:
         manual = set(existing.manual_fields or [])
         for attribute in manual:
             if attribute in defaults:
                 defaults[attribute] = getattr(existing, attribute)
+    defaults["unverified_fields"] = sorted(
+        set(unverified_fields or ()) - manual
+    )
 
     certificate, _created = Certificate.objects.update_or_create(
         document=document, defaults=defaults
@@ -358,7 +367,11 @@ def _persist_certificate(document: Document, payload: ExtractionPayload) -> Cert
 
 
 def _norm_text(text: str) -> str:
-    return " ".join((text or "").split()).casefold()
+    folded = unicodedata.normalize("NFKD", text or "")
+    folded = folded.replace("‐", "-").replace("‑", "-").replace("‒", "-")
+    folded = folded.replace("–", "-").replace("—", "-").replace("−", "-")
+    folded = folded.replace("‘", "'").replace("’", "'").replace("“", '"').replace("”", '"')
+    return " ".join(folded.split()).casefold()
 
 
 def _quote_in_page(quote: str, page_text: str) -> bool:
@@ -366,20 +379,26 @@ def _quote_in_page(quote: str, page_text: str) -> bool:
     return bool(needle) and needle in _norm_text(page_text)
 
 
-def _validate_evidence(payload: ExtractionPayload, page_texts: dict[int, str]) -> None:
-    """Reject output whose evidence quotes do not appear on the cited page.
+def _validate_evidence(payload: ExtractionPayload, page_texts: dict[int, str]) -> set[str]:
+    """Verify evidence quotes against the cited pages.
 
-    Literal fields stay strict: a bad quote means the model invented data.
+    Returns the payload field names whose literal evidence quote could not be
+    verified — those values are kept but must be marked unverified downstream.
     Date candidates are auxiliary — an unverifiable quote drops just that
-    candidate instead of failing the whole extraction.
+    candidate instead of affecting the field set.
     """
+    unverified: set[str] = set()
     for name in LITERAL_FIELDS:
         field = getattr(payload, name)
-        if field.evidence is None:
+        if field.evidence is None or not (field.value or "").strip():
             continue
         page_text = page_texts.get(field.evidence.page)
         if page_text is None or not _quote_in_page(field.evidence.quote, page_text):
-            raise ValueError(f"evidence quote for '{name}' not found on page {field.evidence.page}")
+            unverified.add(name)
+            logger.info(
+                "extraction_evidence_unverified",
+                extra={"outcome": "kept_unverified", "field": name},
+            )
     kept: list[DateCandidate] = []
     for index, candidate in enumerate(payload.dates):
         if candidate.page is None or candidate.quote is None:
@@ -394,6 +413,7 @@ def _validate_evidence(payload: ExtractionPayload, page_texts: dict[int, str]) -
                 extra={"outcome": "dropped", "index": index},
             )
     payload.dates = kept
+    return unverified
 
 
 def _page_texts(document: Document) -> dict[int, str]:
@@ -502,17 +522,118 @@ def _fallback_student_name(page_texts: dict[int, str]) -> FieldValue | None:
     return None
 
 
+_SCORE_OVER_RE = re.compile(r"(\d{1,3}(?:[.,]\d{1,2})?)\s*/\s*100\b")
+_SCORE_LABEL_RE = re.compile(
+    r"(?i)\b(?:overall\s+|global\s+)?(?:score|puntuaci[oó]n|nota(?:\s+final)?|"
+    r"qualificaci[oó](?:\s+final)?|calificaci[oó]n|grade|result|marks?)\b"
+    r"[^\d\n]{0,40}(\d{1,3}(?:[.,]\d{1,2})?)"
+)
+_ISSUE_DATE_LABEL_RE = re.compile(
+    r"(?i)(issue|exped|awarded?|date\s+of|data\s+d|emisi[oó]n|darrera?)"
+)
+_DATE_VALUE_RE = re.compile(
+    r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b"
+    r"|\b\d{1,2}\s+[A-Za-zÀ-ÿ]{3,12}\.?,?\s+\d{4}\b"
+    r"|\b\d{4}-\d{2}-\d{2}\b"
+)
+
+
+def _line_for(text: str, start: int, end: int) -> str:
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    if line_end == -1:
+        line_end = len(text)
+    return text[line_start:line_end].strip()
+
+
+def _fallback_score(page_texts: dict[int, str]) -> FieldValue | None:
+    """Recover an overall score the model missed (e.g. ``80 /100``)."""
+    for page_number in sorted(page_texts):
+        text = page_texts[page_number]
+        for pattern in (_SCORE_OVER_RE, _SCORE_LABEL_RE):
+            match = pattern.search(text)
+            if match is None:
+                continue
+            value = match.group(0) if pattern is _SCORE_OVER_RE else match.group(1)
+            return FieldValue(
+                value=value.strip(),
+                evidence=FieldEvidence(
+                    page=page_number, quote=_line_for(text, match.start(), match.end())
+                ),
+                confidence=0.5,
+            )
+    return None
+
+
+def _fallback_issue_date(page_texts: dict[int, str]) -> DateCandidate | None:
+    """Recover an issue date printed near an issue label."""
+    for page_number in sorted(page_texts):
+        text = page_texts[page_number]
+        for label in _ISSUE_DATE_LABEL_RE.finditer(text):
+            window = text[label.end() : label.end() + 120]
+            match = _DATE_VALUE_RE.search(window)
+            if match is not None:
+                return DateCandidate(
+                    text=match.group(0),
+                    role="issue",
+                    page=page_number,
+                    quote=match.group(0),
+                )
+    return None
+
+
+def _has_issue_date(payload: ExtractionPayload) -> bool:
+    return any(candidate.role == "issue" for candidate in payload.dates)
+
+
+def build_focus_messages(text: str, missing: list[str]) -> list[dict[str, str]]:
+    """Second-pass prompt asking only for fields the first pass missed."""
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                "A previous extraction of this certificate missed the following "
+                f"data: {', '.join(missing)}.\n"
+                "Search the document text again and return JSON matching the "
+                "schema with ONLY those fields filled (every other field null "
+                "or empty). Every filled field MUST include evidence with a "
+                "verbatim quote copied from the cited page.\n\n"
+                "<document>\n"
+                f"{text}\n"
+                "</document>"
+            ),
+        },
+    ]
+
+
+def _merge_focus(payload: ExtractionPayload, focused: ExtractionPayload) -> None:
+    """Merge second-pass values into empty fields of the primary payload."""
+    for name in LITERAL_FIELDS:
+        target = getattr(payload, name)
+        source = getattr(focused, name)
+        if not (target.value or "").strip() and (source.value or "").strip():
+            setattr(payload, name, source)
+    known = {candidate.text for candidate in payload.dates}
+    payload.dates.extend(
+        candidate for candidate in focused.dates if candidate.text not in known
+    )
+
+
 def _call_model(
     llm: OllamaClient,
     text: str,
     page_texts: dict[int, str],
+    *,
+    messages: list[dict[str, str]] | None = None,
 ) -> ExtractionPayload:
     """Call the model and validate output, retrying bounded times.
 
     Each invalid attempt feeds the validation error and the invalid output
     back to the model as repair context instead of resending the same prompt.
+    Evidence verification happens once on the final payload by the caller.
     """
-    messages = build_messages(text)
+    messages = messages if messages is not None else build_messages(text)
     last_error: Exception | None = None
     for _attempt in range(MAX_INVALID_ATTEMPTS):
         content = llm.chat(
@@ -521,9 +642,7 @@ def _call_model(
             temperature=0.0,
         )
         try:
-            payload = parse_payload(content)
-            _validate_evidence(payload, page_texts)
-            return payload
+            return parse_payload(content)
         except (json.JSONDecodeError, ValidationError, ValueError) as exc:
             last_error = exc
             messages.append({"role": "assistant", "content": content})
@@ -608,13 +727,53 @@ def extract_certificate(
             )
 
         page_texts = _page_texts(document)
+        unverified_names = _validate_evidence(payload, page_texts)
+        unverified_attrs = {LITERAL_FIELDS[name] for name in unverified_names}
+
         if not (payload.student_name.value or "").strip():
             fallback = _fallback_student_name(page_texts)
             if fallback is not None:
                 payload.student_name = fallback
+                unverified_attrs.add("student_name")
+
+        if not (payload.score.value or "").strip():
+            fallback = _fallback_score(page_texts)
+            if fallback is not None:
+                payload.score = fallback
+                unverified_attrs.add("score_literal")
+
+        if not _has_issue_date(payload):
+            fallback = _fallback_issue_date(page_texts)
+            if fallback is not None:
+                payload.dates.append(fallback)
+                unverified_attrs.add("issue_date")
+
+        missing = []
+        if not (payload.score.value or "").strip():
+            missing.append("score")
+        if not _has_issue_date(payload):
+            missing.append("issue date")
+        if missing:
+            try:
+                focused = _call_model(
+                    selected_llm,
+                    text,
+                    page_texts,
+                    messages=build_focus_messages(text, missing),
+                )
+                _merge_focus(payload, focused)
+                unverified_attrs |= {
+                    LITERAL_FIELDS[name]
+                    for name in _validate_evidence(payload, page_texts)
+                }
+            except Exception as exc:
+                logger.info(
+                    "extraction_second_pass_failed",
+                    extra={"outcome": "skipped", "error": str(exc)[:200]},
+                )
 
         with transaction.atomic():
-            _persist_certificate(document, payload)
+            _persist_certificate(document, payload, unverified_attrs)
             reasons: list[str] = []
             if not payload.is_language_certificate:
                 reasons.append("non_certificate")

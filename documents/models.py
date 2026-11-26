@@ -160,6 +160,7 @@ class Certificate(models.Model):
     )
     review_reasons = models.JSONField(default=list, blank=True)
     manual_fields = models.JSONField(default=list, blank=True)
+    unverified_fields = models.JSONField(default=list, blank=True)
     prompt_version = models.CharField(max_length=50, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -193,6 +194,7 @@ class ReviewEvent(models.Model):
         APPROVE = "approve", "Aprobación"
         REJECT = "reject", "Rechazo"
         REPROCESS = "reprocess", "Reproceso"
+        REEXTRACT = "reextract", "Re-extracción"
         LEARN = "learn", "Aprendizaje"
 
     certificate = models.ForeignKey(Certificate, related_name="events", on_delete=models.CASCADE)

@@ -17,6 +17,7 @@ urlpatterns = [
     path("<int:pk>/reject/", views.review_reject, name="reject"),
     path("<int:pk>/release-field/", views.review_release_field, name="release_field"),
     path("<int:pk>/reprocess/", views.review_reprocess, name="reprocess"),
+    path("<int:pk>/re-extract/", views.review_reextract, name="re_extract"),
     path("<int:pk>/original/", views.document_original, name="original"),
     path("<int:pk>/thumbnail/", views.document_thumbnail, name="thumbnail"),
     path("<int:pk>/history/", views.review_history, name="history"),

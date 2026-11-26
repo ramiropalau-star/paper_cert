@@ -106,6 +106,14 @@ def apply_manual_edit(
         manual.update(FOREIGN_KEY_FIELDS.get(field, field) for field in changes)
         certificate.manual_fields = sorted(manual)
         certificate.save()
+        unverified = [
+            field
+            for field in (certificate.unverified_fields or [])
+            if field not in changes
+        ]
+        if unverified != (certificate.unverified_fields or []):
+            certificate.unverified_fields = unverified
+            certificate.save(update_fields=["unverified_fields", "updated_at"])
         ReviewEvent.objects.create(
             certificate=certificate,
             event_type=ReviewEvent.EventType.EDIT,
@@ -248,6 +256,9 @@ def validate_certificate(certificate: Certificate, actor) -> ReviewOutcome:
         with transaction.atomic():
             before = {"review_status": certificate.review_status}
             transition_certificate(certificate, Certificate.ReviewStatus.VALIDATED)
+            if certificate.unverified_fields:
+                certificate.unverified_fields = []
+                certificate.save(update_fields=["unverified_fields", "updated_at"])
             event = ReviewEvent.objects.create(
                 certificate=certificate,
                 event_type=ReviewEvent.EventType.VALIDATE,

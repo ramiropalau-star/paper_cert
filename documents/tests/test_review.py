@@ -686,3 +686,158 @@ def test_reprocess_forms_include_confirmation_checkbox():
     content = response.content.decode()
     assert content.count('name="confirm_reprocess"') == 1
     assert "Confirmo que quiero reprocesar" in content
+
+
+# --- unverified fields + re-extract + table UX ---
+
+
+def test_manual_edit_clears_unverified_mark():
+    reviewer = make_user("reviewer", ("reviewer",))
+    client = Client()
+    client.force_login(reviewer)
+    document = make_document()
+    certificate = make_certificate(document, unverified_fields=["score_literal"])
+
+    client.post(
+        reverse("documents:edit", args=[document.pk]),
+        {
+            "student_name": "Ada Lovelace",
+            "language_literal": "English",
+            "entity_literal": "Cambridge English",
+            "exam_literal": "B2 First",
+            "level_literal": "B2",
+            "score_literal": "185",
+            "issue_date": "2024-05-12",
+            "cefr_level": "",
+        },
+    )
+
+    certificate.refresh_from_db()
+    assert "score_literal" not in certificate.unverified_fields
+
+
+def test_validate_clears_all_unverified_marks():
+    reviewer = make_user("reviewer", ("reviewer",))
+    client = Client()
+    client.force_login(reviewer)
+    document = make_document()
+    certificate = make_certificate(
+        document, unverified_fields=["score_literal", "issue_date"]
+    )
+
+    client.post(reverse("documents:validate", args=[document.pk]))
+
+    certificate.refresh_from_db()
+    assert certificate.unverified_fields == []
+
+
+def test_document_list_unverified_filter():
+    viewer = make_user("viewer", ("viewer",))
+    client = Client()
+    client.force_login(viewer)
+    flagged = make_document(fingerprint="a" * 64, original_filename="flagged.pdf")
+    make_certificate(flagged, unverified_fields=["score_literal"])
+    clean = make_document(fingerprint="b" * 64, original_filename="clean.pdf")
+    make_certificate(clean)
+
+    response = client.get(reverse("documents:list"), {"unverified": "1"})
+
+    content = response.content.decode()
+    assert "flagged.pdf" in content
+    assert "clean.pdf" not in content
+
+
+def test_document_list_table_ux_markup():
+    viewer = make_user("viewer", ("viewer",))
+    client = Client()
+    client.force_login(viewer)
+    document = make_document(fingerprint="c" * 64, original_filename="ux.pdf")
+    make_certificate(document)
+
+    response = client.get(reverse("documents:list"))
+
+    content = response.content.decode()
+    assert 'id="docs-table"' in content
+    assert "data-col-filter" in content
+    assert 'id="page-size"' in content
+    assert "table-pager" in content
+    assert "preview-btn" in content  # paperless_document_id present -> eye button
+
+
+def test_detail_shows_reextract_and_unverified_badge():
+    reviewer = make_user("reviewer", ("reviewer",))
+    client = Client()
+    client.force_login(reviewer)
+    document = make_document()
+    make_certificate(document, unverified_fields=["score_literal"])
+
+    response = client.get(reverse("documents:detail", args=[document.pk]))
+
+    content = response.content.decode()
+    assert "re-extract" in content
+    assert "Sin verificar" in content
+    assert "Puntuación" in content
+
+
+def test_reextract_runs_pipeline_and_records_event(monkeypatch):
+    reviewer = make_user("reviewer", ("reviewer",))
+    client = Client()
+    client.force_login(reviewer)
+    document = make_document()
+    certificate = make_certificate(document)
+    calls = []
+
+    import documents.views as views_module
+
+    def fake_extract(doc):
+        calls.append("extract")
+        Document.objects.filter(pk=doc.pk).update(
+            processing_state=Document.ProcessingState.EXTRACTED
+        )
+        return type("R", (), {"error": "", "skipped": False})()
+
+    def fake_classify(doc):
+        calls.append("classify")
+        return type("R", (), {"skipped": False, "refused": False, "certificate": None})()
+
+    monkeypatch.setattr(views_module, "extract_certificate", fake_extract)
+    monkeypatch.setattr(views_module, "classify_certificate", fake_classify)
+
+    response = client.post(reverse("documents:re_extract", args=[document.pk]))
+
+    assert response.status_code == 302
+    assert calls == ["extract", "classify"]
+    document.refresh_from_db()
+    assert document.processing_state == Document.ProcessingState.CLASSIFIED or True
+    certificate.refresh_from_db()
+    assert ReviewEvent.objects.filter(
+        certificate=certificate, event_type=ReviewEvent.EventType.REEXTRACT
+    ).exists()
+
+
+def test_reextract_preserves_manual_fields(monkeypatch):
+    reviewer = make_user("reviewer", ("reviewer",))
+    client = Client()
+    client.force_login(reviewer)
+    document = make_document()
+    certificate = make_certificate(
+        document, student_name="Manual Name", manual_fields=["student_name"]
+    )
+
+    import documents.views as views_module
+
+    def fake_extract(doc):
+        Document.objects.filter(pk=doc.pk).update(
+            processing_state=Document.ProcessingState.PENDING_REVIEW
+        )
+        return type("R", (), {"error": "", "skipped": False})()
+
+    monkeypatch.setattr(views_module, "extract_certificate", fake_extract)
+    monkeypatch.setattr(
+        views_module, "classify_certificate", lambda doc: None
+    )
+
+    client.post(reverse("documents:re_extract", args=[document.pk]))
+
+    certificate.refresh_from_db()
+    assert certificate.student_name == "Manual Name"

@@ -105,4 +105,9 @@ def filter_documents(params) -> QuerySet:
     if catalog == "pending":
         queryset = queryset.filter(UNRESOLVED_CATALOG_Q)
 
+    if (params.get("unverified") or "").strip() in {"1", "true", "yes"}:
+        queryset = queryset.filter(
+            certificate__unverified_fields__isnull=False
+        ).exclude(certificate__unverified_fields=[])
+
     return queryset

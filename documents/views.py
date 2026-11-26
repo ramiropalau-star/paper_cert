@@ -10,6 +10,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -28,7 +29,7 @@ from core.permissions import (
 )
 from documents.filters import filter_documents
 from documents.forms import CertificateEditForm
-from documents.models import Document, ReviewEvent
+from documents.models import Certificate, Document, ReviewEvent
 from documents.review_display import confidence_display, review_reason_items
 from documents.services.catalog_resolution import unresolved_catalog_fields
 from documents.services.classification import (
@@ -47,6 +48,11 @@ from documents.services.review import (
     release_manual_field,
     reprocess_document,
     validate_certificate,
+)
+from documents.services.state import (
+    StateTransitionError,
+    transition_certificate,
+    transition_document,
 )
 from documents.services.text import acquire_text
 
@@ -345,6 +351,7 @@ def document_list(request):
             "level": request.GET.get("level", ""),
             "issue_date": request.GET.get("issue_date", ""),
             "catalog": request.GET.get("catalog", ""),
+            "unverified": request.GET.get("unverified", ""),
             "languages": Language.objects.filter(is_active=True),
             "entities": Entity.objects.filter(is_active=True),
             "exams": Exam.objects.filter(is_active=True),
@@ -526,6 +533,10 @@ def review_detail(request, pk: int):
                 for field in (certificate.manual_fields if certificate else [])
             ],
             "unresolved_catalog": unresolved_catalog_fields(certificate),
+            "unverified_labels": [
+                (field, FIELD_LABELS.get(field, field))
+                for field in (certificate.unverified_fields if certificate else [])
+            ],
         },
     )
 
@@ -657,6 +668,51 @@ def review_reprocess(request, pk: int):
         messages.success(request, "Documento encolado para reprocesamiento.")
     else:
         messages.error(request, outcome.error)
+    return redirect("documents:detail", pk=document.pk)
+
+
+@login_required
+@role_required(ROLE_REVIEWER)
+@require_POST
+def review_reextract(request, pk: int):
+    """Re-run extraction + classification directly, bypassing the n8n webhook."""
+    document = get_object_or_404(Document, pk=pk)
+    certificate = getattr(document, "certificate", None)
+    before_state = document.processing_state
+    try:
+        with transaction.atomic():
+            transition_document(
+                document,
+                Document.ProcessingState.STORED,
+                fields={"error_reason": ""},
+                reprocess=True,
+            )
+            if certificate is not None:
+                transition_certificate(
+                    certificate, Certificate.ReviewStatus.PENDING, reprocess=True
+                )
+            if certificate is not None:
+                ReviewEvent.objects.create(
+                    certificate=certificate,
+                    event_type=ReviewEvent.EventType.REEXTRACT,
+                    actor=request.user,
+                    before={"processing_state": before_state},
+                    after={"processing_state": Document.ProcessingState.STORED},
+                )
+    except StateTransitionError:
+        messages.error(request, "No se permite re-extraer un documento en este estado.")
+        return redirect("documents:detail", pk=document.pk)
+
+    transition_document(document, Document.ProcessingState.TEXT_READY)
+    extract_result = extract_certificate(document)
+    document.refresh_from_db()
+    if document.processing_state == Document.ProcessingState.EXTRACTED:
+        classify_certificate(document)
+        document.refresh_from_db()
+    if extract_result.error:
+        messages.error(request, f"Re-extracción falló: {extract_result.error}")
+    else:
+        messages.success(request, "Documento re-extraído.")
     return redirect("documents:detail", pk=document.pk)
 
 

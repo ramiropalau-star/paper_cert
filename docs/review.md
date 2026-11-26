@@ -15,6 +15,16 @@ Only approved records enter the main Excel report.
 - **Fecha de expedición**: exact date (`YYYY-MM-DD`).
 - **Catálogo**: "Pendiente de catálogo" lists only documents with at least
   one unresolved catalog literal (entity, exam, or language).
+- **Verificación**: "Con campos sin verificar" lists only certificates with
+  fields marked unverified (see below).
+
+The table itself supports client-side review aids on top of the server
+filters: a per-column filter row under the header, click-to-sort on every
+column header (ascending/descending), and pagination defaulting to 10 rows
+with a page-size selector (10/25/50/100/all, remembered per session). Each
+row with a Paperless original has an eye button that opens the document in a
+lightbox for quick visual review without leaving the list. The "Equiv. UV"
+column links to the matching equivalence rule on `/catalog/equivalences/`.
 
 The list also shows the student **NPA**, parsed from the original filename
 (`<año>ERASMUS<NPA>_...`, e.g. `2027ERASMUSWF29402_I....pdf` → `WF29402`);
@@ -152,10 +162,30 @@ event, and notifies the n8n processing webhook when
 `APP_N8N_PROCESSING_WEBHOOK_URL` is configured. No duplicate document or
 certificate rows are created; previous values remain in the event history.
 
+**Re-extract** (`Re-extraer` button, reviewers) is the direct alternative for
+re-running only extraction + classification against the stored page texts,
+without the n8n webhook round-trip. It resets the document to `text_ready`,
+runs the extraction service synchronously (expect ~20-60 s for the model
+call), then classification, preserves `manual_fields`, and records a
+`reextract` event. Use it to rescue documents stuck mid-pipeline or to
+re-apply a newer prompt/fallback logic to a single certificate.
+
+## Unverified fields
+
+Extraction verifies every literal field's evidence quote against the cited
+page. When a quote cannot be verified, the value is **kept but flagged** in
+`certificate.unverified_fields` instead of failing the whole extraction —
+the same trust model as any other extracted value, but badged "sin verificar"
+in the detail view and marked `?` in the list. Deterministic fallbacks
+(student name, score, issue date) and values adopted by the focused second
+pass are flagged the same way. Editing a field or marking the certificate
+**validated** clears its unverified marks; approving does not require them
+to be resolved first.
+
 ## History
 
 `/documents/<id>/history/` lists every `ReviewEvent` (edit, validate,
-approve, reject, reprocess, learn) in chronological order with actor,
+approve, reject, reprocess, reextract, learn) in chronological order with actor,
 timestamp, reason, and the before/after payloads. Approve/validate events
 carry the learning outcome; `learn` events are emitted by the
 `learn_from_history` backfill.
