@@ -5,12 +5,8 @@ the originals in Paperless-ngx, extracts structured fields with a local
 Ollama model, classifies them against an editable catalog, routes uncertain
 records to human review, and produces Excel reports.
 
-The system learns from every approved or validated certificate: printed
-literals become catalog aliases, manual equivalence/CEFR corrections become
-rules, and each issuer accumulates a per-year format profile that scores
-future documents and can flag `format_mismatch` for review. See
-[Review → Learning from review](docs/review.md#learning-from-review) and
-`python manage.py learn_from_history` for backfilling from history.
+The system learns from every approved or validated certificate — see
+[Review-driven learning](#review-driven-learning).
 
 ## Stack
 
@@ -42,6 +38,58 @@ under **Reportes**.
 
 Import the n8n workflows from `n8n/workflows/` — see
 [docs/n8n.md](docs/n8n.md).
+
+## Review-driven learning
+
+Every approved or validated certificate teaches the catalog (post-commit,
+never blocking the decision, fully idempotent):
+
+- **Aliases** — printed literals that resolved to catalog entries are saved
+  as `LanguageAlias`/`EntityAlias`/`ExamAlias`, so the next document with the
+  same wording classifies automatically. Conflicting aliases are never
+  overwritten; they are recorded as conflicts in the learning outcome.
+- **Missing exams** — a manually assigned exam on an unknown literal creates
+  the `Exam` entry (scoped to entity + language). New *entities* are still
+  created via the Django admin.
+- **Equivalences** — a manually corrected UV L2 level creates an unbanded
+  `Equivalence` rule (`source="review"`) when none exists for that exam.
+- **CEFR rules** — a manually corrected CEFR level creates an *inactive*
+  `CefrConversionRule` candidate pinned to the observed score; a human must
+  widen the band and activate it.
+
+The outcome of each learning run is stored in the approve/validate
+`ReviewEvent`, and rejected or unapproved certificates never teach.
+
+### Format profiles
+
+Each entity accumulates a textual format profile per **issuance year**
+(cohort), built from the normalized boilerplate lines of its approved
+certificates. An anchor only counts when corroborated by at least two
+approved samples or half the cohort, whichever is stricter — legitimate
+year-to-year layout drift is absorbed by separate cohorts, and single-document
+quirks never define a format.
+
+During classification, `score_document_format` matches the document's page
+text against the profile of its claimed entity/year (falling back to the
+entity-wide union, with a cross-entity penalty cap) and stores
+`certificate.format_score` + `format_cohort`. The score blends 30% into
+`certificate.confidence`, and a score below `APP_FORMAT_SCORE_THRESHOLD`
+(default `0.4`) emits the `format_mismatch` review reason — so a plain-text
+PDF with plausible fields cannot pass as a genuine certificate.
+
+Relevant settings: `APP_FORMAT_MIN_SAMPLES` (2), `APP_FORMAT_MIN_EXAM_SAMPLES`
+(3), `APP_FORMAT_SCORE_THRESHOLD` (0.4), `APP_FORMAT_MAX_SCORE` (0.5).
+
+### Backfill
+
+```bash
+docker compose exec app python manage.py learn_from_history --dry-run
+docker compose exec app python manage.py learn_from_history
+```
+
+Replays catalog + format learning over already-approved/validated
+certificates. Idempotent — safe to re-run; `--dry-run` reports without
+writing.
 
 ## Documentation
 
