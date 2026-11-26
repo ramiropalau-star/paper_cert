@@ -36,12 +36,18 @@ DB_ENGINE=sqlite DJANGO_DEBUG=true .venv/bin/python manage.py runserver
 
 - `config/`: Django settings, URL root, WSGI/ASGI entry points.
 - `core/`: health endpoint, landing page, shared templates and static assets.
-- `catalog/`: languages, certifying entities, aliases, exams, and CEFR rules.
-- `documents/`: document and certificate models, intake, text acquisition, extraction, classification, review views.
+- `catalog/`: languages, certifying entities, aliases, exams, equivalences,
+  CEFR rules, and format profiles.
+- `documents/`: document and certificate models, intake, text acquisition,
+  extraction, classification, review views, and Paperless sync.
 - `reports/`: report jobs and Excel generation.
+- `accounts/`: user management views on top of Django auth.
 - `ocr-service/`: standalone OCR HTTP service.
 - `n8n/workflows/`: exported n8n workflows.
 - `docker/`: Dockerfiles.
+- `deploy.sh`, `compose.yaml`, `compose.gpu.yaml`: deployment.
+- `scripts/`: smoke test and helper scripts.
+- `inbox/`: watched intake folder (bind-mounted into the watcher).
 - `docs/`: operational and design documentation.
 - `tests/`: cross-cutting tests; each app keeps its own tests next to the code.
 

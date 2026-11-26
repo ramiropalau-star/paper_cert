@@ -21,6 +21,13 @@ files without that pattern show `—`.
 Filters combine with AND semantics. The same filters (plus an
 **Organismo emisor** text filter) are available in the gallery.
 
+## Processing queue
+
+`/documents/queue/` is a live view of documents currently moving through the
+pipeline (`received` → `stored` → `text_ready` → `extracted` →
+`classified`). It refreshes automatically and is useful to confirm intake is
+flowing while uploads or a Paperless sync are in progress.
+
 ## Gallery and bulk review
 
 `/documents/gallery/` shows certificate documents as a visual grid: each card
@@ -57,6 +64,13 @@ Field warnings:
 | `missing_essential_fields` | Faltan campos obligatorios |
 | `multiple_certificates` | Posibles múltiples certificados |
 | `non_certificate` | No parece un certificado de idioma |
+| `equivalence_not_found` | Sin equivalencia UV L2 para el examen |
+| `format_mismatch` | El formato no coincide con el perfil conocido del emisor |
+
+Pipeline-stage codes (`ocr_failed`, `insufficient_text`,
+`low_ocr_confidence`, `original_unavailable`, `model_unavailable`, …) are
+also translated into operator-readable labels; see
+`documents/review_display.py` for the full mapping.
 
 ## Manual editing
 
@@ -75,6 +89,16 @@ certificate code. Dates are validated as `YYYY-MM-DD`. Manual CEFR edits set
 
 Each change writes a `ReviewEvent` of type `edit` capturing the actor,
 timestamp, and before/after values for every changed field.
+
+### Manual-field freeze
+
+Every field edited during review is recorded in
+`certificate.manual_fields`. Frozen fields are preserved verbatim on
+reprocess/re-extraction instead of being overwritten by the pipeline, so a
+human correction is never silently lost. The detail page offers a
+**Liberar campo** action per field (`POST /documents/<id>/release-field/`)
+that removes it from `manual_fields` so the next reprocess can overwrite it
+again.
 
 ## Approve and reject
 
@@ -102,9 +126,11 @@ certificate rows are created; previous values remain in the event history.
 
 ## History
 
-`/documents/<id>/history/` lists every `ReviewEvent` (edit, approve,
-reject, reprocess) in chronological order with actor, timestamp, reason, and
-the before/after payloads.
+`/documents/<id>/history/` lists every `ReviewEvent` (edit, validate,
+approve, reject, reprocess, learn) in chronological order with actor,
+timestamp, reason, and the before/after payloads. Approve/validate events
+carry the learning outcome; `learn` events are emitted by the
+`learn_from_history` backfill.
 
 ## Validated state
 

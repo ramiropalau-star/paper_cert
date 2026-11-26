@@ -36,8 +36,14 @@ text acquisition → extraction → classification, and the record lands in
 **pending review**. Approve it in the review UI, then generate a report
 under **Reportes**.
 
-Import the n8n workflows from `n8n/workflows/` — see
-[docs/n8n.md](docs/n8n.md).
+The review workspace includes a document list with filters, a live
+processing queue (`/documents/queue/`), a visual gallery with bulk
+actions, and per-record editing with audit history. Equivalences are
+maintained in-app at `/catalog/`; user accounts and roles live under
+`/users/` (admin role only).
+
+`deploy.sh` already imports and activates the bundled n8n workflows;
+for a manual setup see [docs/n8n.md](docs/n8n.md).
 
 ## Review-driven learning
 
@@ -103,6 +109,7 @@ writing.
 - [Review](docs/review.md) — queue, edits, approval, audit history
 - [Reporting](docs/reporting.md) — Excel workbooks, filters, pending sheet
 - [Security](docs/security.md) — auth, roles, internal API
+- [Configuration](docs/configuration.md) — full environment variable reference
 - [Data model](docs/data-model.md) — entities and state machine
 - [Development](docs/development.md) — local setup and tests
 

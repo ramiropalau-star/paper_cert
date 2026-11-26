@@ -7,15 +7,26 @@ literal and unresolved.
 
 ## Catalog
 
-Managed in Django admin (admin role):
+Master data is managed in Django admin (admin role), and equivalences also
+have an in-app UI at `/catalog/` for reviewers:
 
 - **Languages** and **Language aliases** — certified language.
-- **Entities** and **Entity aliases** — certifying bodies.
-- **Exams** — linked to an entity and optionally a language.
+- **Entities** and **Entity aliases** — certifying bodies, including the
+  `date_order` used to disambiguate numeric dates.
+- **Exams** and **Exam aliases** — linked to an entity and optionally a
+  language.
+- **Equivalences** — accredited CEFR level per exam (optionally score-banded);
+  browsable and editable at `/catalog/`, which can also create an entity +
+  exam + aliases + equivalences in one form.
 - **CEFR conversion rules** — score range → CEFR level per exam.
+- **Format profiles** — learned per-entity format signatures rebuilt from
+  approved certificates; see `docs/review.md`.
 
 Adding an entity, alias, or exam takes effect on the next classification
 run (reprocess the document); no code change or redeploy is needed.
+Approving or validating a certificate also learns catalog entries
+(aliases, missing exams, equivalences, CEFR candidates) — see
+`docs/review.md` "Learning from review".
 
 ## Matching rules
 
@@ -88,6 +99,12 @@ Classification writes these codes to `certificate.review_reasons`:
 | `non_certificate` | document is not a language certificate |
 | `equivalence_not_found` | exam resolved but no UV L2 equivalence rule applies |
 | `format_mismatch` | document text does not match the issuer's known format profile |
+
+Pipeline-stage failures (`ocr_failed`, `insufficient_text`,
+`low_ocr_confidence`, `original_unavailable`, `model_unavailable`,
+`invalid_extraction`, `recovery_attempts_exhausted`, and similar) are
+also surfaced as review reasons with operator-readable labels; the full
+code-to-label mapping lives in `documents/review_display.py`.
 
 ## `Otros` label
 

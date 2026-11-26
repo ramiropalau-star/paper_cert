@@ -69,8 +69,36 @@ docker compose up -d                                 # remaining services
 docker compose exec ollama ollama pull qwen2.5:7b-instruct
 ```
 
-Then import the n8n workflows (see `docs/n8n.md`), log in at
-`http://localhost:8080`, and upload a certificate.
+Then log in at `http://localhost:8080` and upload a certificate.
+
+### deploy.sh
+
+`deploy.sh` automates the whole bootstrap: generates `.env` secrets on first
+run, builds and starts the stack, runs migrations and the catalog/admin seed,
+pulls the Ollama model, imports and activates the n8n workflows, and runs the
+smoke test. Options (environment variables):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DEPLOY_HOST` | auto-detected first IP | Public IP/hostname written into `.env`. |
+| `DEPLOY_ADMIN_PASSWORD` | `admin` | Django + Paperless admin password. |
+| `SKIP_MODEL` | unset | `1` skips the Ollama model pull. |
+| `SKIP_SMOKE` | unset | `1` skips the end-to-end smoke test. |
+| `FORCE_ENV` | unset | `1` regenerates `.env` even if it exists. |
+| `DEPLOY_GPU` | `auto` | `auto`/`gpu`/`cpu` — see GPU deployment below. |
+
+#### GPU deployment
+
+Ollama uses the CPU by default. With an NVIDIA GPU and the
+`nvidia-container-toolkit` installed, `deploy.sh` detects them
+(`DEPLOY_GPU=auto`) and layers `compose.gpu.yaml` on top of `compose.yaml`,
+registers the CDI device spec, and recreates `ollama` on the GPU. `DEPLOY_GPU=gpu`
+forces the override; `DEPLOY_GPU=cpu` forces CPU. After pulling the model the
+script verifies in the Ollama logs that inference actually lands on the GPU —
+if not, it warns and keeps CPU. Without a GPU or toolkit the stack runs on CPU
+unchanged.
+
+For a manual GPU deploy: `docker compose -f compose.yaml -f compose.gpu.yaml up -d`.
 
 The Paperless *Document Added* webhook is provisioned automatically: the
 `bootstrap` command attempts it (best-effort while Paperless is still
@@ -136,6 +164,22 @@ curl -s http://localhost:8080/internal/healthz -H "X-Internal-Token: $APP_INTERN
 Documents stuck in `error` can be retried from the review UI
 (**Reprocesar**) or by replaying the n8n execution.
 
+After catalog changes (new entities, exams, aliases, equivalences), pending
+documents can be reclassified without re-uploading:
+
+```bash
+docker compose exec app python manage.py reclassify_certificates            # pending_review only
+docker compose exec app python manage.py reclassify_certificates --reextract  # also re-run LLM extraction
+docker compose exec app python manage.py reclassify_certificates --document 42 --document 43
+```
+
+### Logging
+
+`LOG_LEVEL` (default `INFO`) and `LOG_FORMAT` (`keyvalue` or `json`) control
+the app's structured logs. `RequestIdMiddleware` propagates an
+`X-Request-ID` header (or a generated id) through the request so log lines
+carry a correlation id. See `core/logging.py` and `core/middleware.py`.
+
 ### User management
 
 The deploy bootstrap creates a single `admin` superuser. Additional users are
@@ -177,6 +221,7 @@ docker compose exec app python manage.py recover_stuck --dry-run   # list only
 docker compose exec app python manage.py recover_stuck             # real run
 docker compose exec app python manage.py recover_stuck --older-than 600 --max-attempts 5
 docker compose exec app python manage.py recover_stuck --documents-only
+docker compose exec app python manage.py recover_stuck --reports-only
 ```
 
 Recovery events are logged as `recovery_run`, `recovery_document_requeued`,

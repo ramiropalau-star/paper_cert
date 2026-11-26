@@ -67,6 +67,10 @@ upload -> validate -> SHA-256 fingerprint -> duplicate check
 | `APP_PAPERLESS_TIMEOUT_SECONDS` | `30` | HTTP timeout. |
 | `APP_PAPERLESS_POLL_INTERVAL_SECONDS` | `1` | Task polling interval. |
 | `APP_PAPERLESS_POLL_TIMEOUT_SECONDS` | `60` | Maximum wait for storage. |
+| `APP_PAPERLESS_RETRIES` | `2` | Retries for retryable Paperless errors (5xx, 429, timeouts). |
+| `APP_PAPERLESS_RETRY_BACKOFF_SECONDS` | `0.5` | Base backoff between Paperless retries. |
+| `APP_PAPERLESS_UI_URL` | empty | Browser-reachable Paperless UI base URL; drives the "view original in Paperless" link on the review detail page. Empty hides the link (the in-app viewer keeps working via the internal API URL). |
+| `APP_PAPERLESS_WEBHOOK_TARGET` | derived from `APP_PAPERLESS_URL` | URL Paperless must call back for webhook events; overridden by `provision_paperless_webhook`. |
 
 The `DocumentStore` adapter in `documents/services/paperless.py` owns these
 Paperless assumptions:
@@ -97,6 +101,16 @@ Only members of the `admin` group (or superusers) can delete. The view first
 deletes the original from Paperless; if that fails, the local record is kept and
 the operator sees an error. On success, the document and its pages, certificate,
 and review events are removed by cascade.
+
+`/documents/delete-all/` performs a scoped bulk deletion with two scopes:
+
+- **tracked** — documents known to Paperless (have a
+  `paperless_document_id`): each original is deleted from Paperless first;
+  failures abort the scope so no local record is orphaned.
+- **untracked** — local-only documents: requires typing the literal
+  confirmation `DELETE-UNTRACKED` before anything is removed.
+
+Both scopes write a `bulk_delete` entry to the audit log.
 
 ## Tests
 
