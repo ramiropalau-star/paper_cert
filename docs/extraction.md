@@ -98,6 +98,28 @@ pre-detection result (`pre_detection.consistency` on the certificate):
   auto-approves; the reviewer sees both the pre-detected and resolved
   values.
 
+## Score sanitization and deterministic recovery
+
+The model sometimes returns malformed score literals — set/list notation
+like `{175, 183}` (per-skill scores) or `[114]`. `_sanitize_score_value`
+unwraps a bracketed single scalar and clears anything else, letting the
+deterministic fallbacks recover the real overall score.
+
+Score recovery patterns, tried in order before the generic label scan:
+
+1. `score / 100` shape (`_SCORE_OVER_RE`).
+2. `Overall/Global Score|Result|Mark|Grade` label followed by the number,
+   across a line break (`_SCORE_OVERALL_RE`) — covers layouts like
+   Cambridge's `Overall Score\n179`.
+3. Number followed by an overall/global label (`_SCORE_TRAIL_RE`) —
+   covers layouts where the value precedes the label, e.g. Oxford's
+   `B2 114\nOVERALL SCORE`.
+4. Generic score-ish labels on the same line (`_SCORE_LABEL_RE`).
+
+Recovered values are marked `score_literal` in `unverified_fields` for
+reviewer confirmation. Candidates only fill fields the model left empty,
+so a verified model value is never overwritten.
+
 ## Bounded fallback-model escalation
 
 When score or an issue date is still missing after the primary pass,

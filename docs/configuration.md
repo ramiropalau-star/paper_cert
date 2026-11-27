@@ -1,9 +1,11 @@
 # Configuration reference
 
-Every tunable lives in `.env` (copy `.env.example` on first deploy). This page
-is the complete variable reference; per-feature details live in the linked
-docs. Secrets must be long random values — `deploy.sh` generates them on
-first run.
+Most tunables live in `.env` (copy `.env.example` on first deploy); a
+subset is also editable at runtime from the admin panel — see
+[Runtime-editable settings](#runtime-editable-settings). This page is the
+complete variable reference; per-feature details live in the linked docs.
+Secrets must be long random values — `deploy.sh` generates them on first
+run.
 
 ## Django
 
@@ -218,3 +220,43 @@ Related flags: `APP_VERACITY_ENABLED` (veracity scoring),
 (optional QR decode), `APP_FORMAT_VERIFIED_WEIGHT` (verified-sample weight
 in profiles), `APP_PROFILE_QUALITY_FLOOR` / `APP_PROFILE_DRIFT_THRESHOLD`
 (profile quality gates).
+
+## Runtime-editable settings
+
+`/admin-panel/configuracion/` (admins only) edits a subset of `APP_*`
+parameters without redeploying: Ollama URL/model/timeout/retries,
+fallback model, OCR settings, Paperless/n8n endpoints and timeouts,
+confidence and format thresholds, feature flags, inbox/sync timings,
+and every other key consumed at request time.
+
+How it works:
+
+- Saving writes a `core.ProgramSetting` row and mirrors the value into
+  the shared cache (`appcfg:v1:<key>`). `settings.APP` is an
+  `AppSettings` dict that checks the cache before the environment
+  default, so all gunicorn workers pick up the change immediately — no
+  restart, no reload.
+- Values are coerced to the type of the environment default
+  (int/float/bool/list/string) and validated per field; invalid input is
+  rejected with a per-key error.
+- Each overridden row shows an `override` badge and a **restablecer**
+  button; **Restablecer todos** clears every override at once.
+- Overrides persist across restarts (DB is the source of truth; the
+  cache is repopulated lazily on first read).
+
+Not editable at runtime (shown read-only): values bound into Django
+settings at startup (`media_root`, `report_output_dir`, `inbox_dir`,
+`cache_dir`, all `APP_EMAIL_*`) and secrets (`*_token`, `*_password`,
+`*_secret` — rendered as `•••`, never editable through the UI). Change
+those in `.env` and restart the `app` container.
+
+## Admin panel layout
+
+`/admin-panel/` is an index of subsection pages:
+
+- **Aprendizaje del emisor** (`/admin-panel/aprendizaje/`) — format
+  profiles, field-label aliases, per-issuer verifier configs.
+- **Usuarios y acceso** (`/admin-panel/usuarios/`) — user management,
+  password change/reset.
+- **Configuración del programa** (`/admin-panel/configuracion/`) —
+  runtime-editable settings above; admins only.

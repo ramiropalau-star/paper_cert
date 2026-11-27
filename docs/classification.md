@@ -40,6 +40,25 @@ Approving or validating a certificate also learns catalog entries
 (aliases, missing exams, equivalences, CEFR candidates) — see
 `docs/review.md` "Learning from review".
 
+### Adding catalog entries by hand
+
+- **New entity** — `/catalog/` → entity detail → create, or let catalog
+  resolution create it from an unresolved literal (`/catalog/resolve/`).
+  Set `date_order` (`dmy`/`mdy`) so ambiguous numeric dates resolve.
+- **Catalog aliases** (`EntityAlias`, `ExamAlias`, `LanguageAlias`) map a
+  printed literal to a catalog entry. They are always global to that
+  entry — there is no per-certificate scope; scoping happens naturally
+  because exam aliases are only consulted within the resolved entity.
+- **Field-label aliases** (`FieldLabelAlias`, managed at
+  `/field-aliases/` or taught inline from the review screen) are a
+  different mechanism: they teach extraction *which label means which
+  field*. These do support scope — **global** (every document) or
+  **entity-scoped** (only certificates of that issuer). Prefer the
+  entity scope whenever the label is issuer-specific, so a generic
+  label like "Nota" cannot leak into other issuers' documents. See
+  `docs/configuration.md` "Field-label alias lifecycle" for activation
+  and corroboration rules.
+
 ## Matching rules
 
 - Language and entity literals are normalized and matched exactly against
@@ -61,6 +80,27 @@ An entity literal that matches nothing stays unresolved
 identificar"**. The reviewer resolves it inline from the detail page
 (catalog resolution, see `docs/review.md`) or fixes the literal and
 reprocesses. The same applies to unknown languages (`unknown_language`).
+
+## Semantic duplicate detection
+
+Intake deduplicates by SHA-256 of the file bytes only, so the same
+certificate re-downloaded or re-scanned enters as a new document. After
+classification, `documents/services/duplicates.py` compares each
+certificate's identity against the other live certificates:
+
+- **Code match** — same entity and the same normalized
+  `certificate_code` (alphanumeric only, punctuation-insensitive).
+- **Corroborated match** (no code) — same entity + same normalized
+  student name, the exams do not contradict, and at least one shared
+  signal among exam, issue date, exam date, or result date. Name+entity
+  alone is deliberately too weak (siblings, namesakes).
+- Rejected certificates do not occupy the identity.
+- A match sets `certificate.duplicate_of` (self-FK), adds the
+  `possible_duplicate` review reason, and shows a warning banner on the
+  document detail page linking to the other file. Both directions are
+  flagged; the reviewer decides which copy is canonical.
+- The flag refreshes on every classification and on manual review edits,
+  and never blocks approval — it is an advisory signal only.
 
 ## CEFR levels
 
@@ -114,6 +154,8 @@ Classification writes these codes to `certificate.review_reasons`:
 | `format_mismatch` | document text does not match the issuer's known format profile |
 | `entity_mismatch` | resolved entity/exam disagrees with issuer pre-detection |
 | `source_mismatch` | source-document field comparison disagrees with extraction |
+| `possible_duplicate` | another live certificate shares the same identity (code, or student/exam/date) |
+| `cefr_discrepancy` | the CEFR level printed on the certificate differs from the resolved `cefr_level` |
 
 After resolving catalog references, classification runs a consistency
 check (`documents/services/consistency.py`) comparing the resolved
@@ -203,6 +245,15 @@ Source-verified certificates (`verified_at_source`, `manually_confirmed`)
 weight anchors and value shapes by `APP_FORMAT_VERIFIED_WEIGHT` (default
 2.0) without relaxing the distinct-sample corroboration threshold — one
 verified sample alone still cannot create an anchor.
+
+In plain terms: every approval is a vote. A boilerplate line or layout
+feature becomes an anchor only after it appears in enough *distinct*
+approved certificates of the cohort (and, for entity pools, in at least
+two issuance years). Early on, pools stay sparse and profiles contribute
+little; as more certificates of the same issuer are validated, anchors
+accumulate, `anchor_recall`/`anchor_precision` rise, and the format score
+gets sharper at spotting forgeries and template drift. Rejecting a bad
+approval and rebuilding (`rebuild_format_profiles`) prunes false anchors.
 
 A profile whose measured `anchor_precision` falls below
 `APP_PROFILE_QUALITY_FLOOR` (default 0.5), or that is flagged as drifting,

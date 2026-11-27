@@ -156,6 +156,15 @@ again.
 Viewers can read everything but cannot edit, approve, reject, or reprocess
 (HTTP 403).
 
+### Duplicate warning
+
+When semantic duplicate detection finds another live certificate with the
+same identity (see `docs/classification.md` "Semantic duplicate
+detection"), the detail page shows a warning banner linking to the other
+document and the `possible_duplicate` reason appears in the observations
+list. It is advisory only — approving is still allowed, but the reviewer
+should verify which copy is canonical first.
+
 ## Reprocess
 
 Reprocessing resets the document to `stored` (pages are kept; the pipeline
