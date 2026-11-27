@@ -9,6 +9,9 @@
 #   DEPLOY_ADMIN_PASSWORD=...  Django + Paperless admin password.
 #                               Default: randomly generated, written to .env
 #                               and shown once in the final summary.
+#                               Charset: letters, digits and . _ @ % + = : , ~ -
+#                               only (no $, !, spaces, quotes — compose .env
+#                               interpolation would corrupt them). Min 8 chars.
 #                               Test-only weak password (e.g. admin) requires
 #                               DEPLOY_ADMIN_PASSWORD=admin plus
 #                               BOOTSTRAP_ALLOW_WEAK_PASSWORD=1 in .env.
@@ -67,6 +70,17 @@ HOST="${DEPLOY_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
 # Sin override se genera una password fuerte: nunca se usa un default conocido.
 ADMIN_PASS_GENERATED=0
 if [ -n "${DEPLOY_ADMIN_PASSWORD:-}" ]; then
+  # .env values are interpolated by docker compose: $, !, quotes, spaces and
+  # shell metacharacters corrupt the value or break parsing. Whitelist only.
+  case "$DEPLOY_ADMIN_PASSWORD" in
+    *[!A-Za-z0-9._@%+=:,~-]*)
+      die "DEPLOY_ADMIN_PASSWORD tiene caracteres no soportados. Usá solo letras, números y . _ @ % + = : , ~ -"
+      ;;
+  esac
+  if [ "${BOOTSTRAP_ALLOW_WEAK_PASSWORD:-}" != "1" ] && \
+     { [ ! -f .env ] || ! grep -q '^BOOTSTRAP_ALLOW_WEAK_PASSWORD=1' .env; }; then
+    [ "${#DEPLOY_ADMIN_PASSWORD}" -ge 8 ] || die "DEPLOY_ADMIN_PASSWORD debe tener al menos 8 caracteres"
+  fi
   ADMIN_PASS="$DEPLOY_ADMIN_PASSWORD"
 else
   ADMIN_PASS="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)"
