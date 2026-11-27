@@ -23,6 +23,12 @@ urlpatterns = [
     path("<int:pk>/verify-now/", views.review_verify_now, name="verify_now"),
     path("field-aliases/", views.field_alias_list, name="field_aliases"),
     path("format-profiles/", views.format_profile_list, name="format_profiles"),
+    path(
+        "format-profiles/<int:pk>/preview/",
+        views.format_profile_preview,
+        name="format_profile_preview",
+    ),
+    path("verifier-configs/", views.verifier_config_list, name="verifier_configs"),
     path("<int:pk>/original/", views.document_original, name="original"),
     path("<int:pk>/thumbnail/", views.document_thumbnail, name="thumbnail"),
     path("<int:pk>/history/", views.review_history, name="history"),

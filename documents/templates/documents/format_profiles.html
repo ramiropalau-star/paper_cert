@@ -13,15 +13,19 @@
       {% for profile in profiles %}
       <tr>
         <td>{{ profile.entity.name }}</td>
-        <td>{{ profile.year }}</td>
+        <td>{{ profile.year|default:"Todos" }}</td>
         <td>{{ profile.exam.name|default:"Todos" }}</td>
         <td>{{ profile.sample_count }}</td>
         <td>
+          <a href="{% url 'documents:format_profile_preview' profile.pk %}" target="_blank" rel="noopener">Vista previa</a>
           <details>
             <summary>{{ profile.anchors|length }} anchors</summary>
             <ul>
               {% for anchor in profile.anchors %}
-                <li class="muted">{{ anchor.text }} <span class="muted">(df {{ anchor.df }})</span></li>
+                <li class="muted">
+                  {% if anchor.kind == "layout" %}[layout] {{ anchor.feature }}{% else %}{{ anchor.text }}{% endif %}
+                  <span class="muted">(df {{ anchor.df }})</span>
+                </li>
               {% endfor %}
             </ul>
           </details>

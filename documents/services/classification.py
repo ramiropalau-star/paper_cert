@@ -7,6 +7,7 @@ catalog entries; unknown values stay unresolved and route to review.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -28,6 +29,10 @@ from catalog.models import (
 )
 from catalog.normalization import normalize_catalog_text
 from documents.models import Certificate, Document
+from documents.services.consistency import (
+    record_consistency,
+    rerun_with_resolved_profile,
+)
 from documents.services.format_profile import score_document_format
 from documents.services.labels import (
     apply_manual_review_label,
@@ -46,6 +51,8 @@ from documents.services.state import transition_document
 
 UNKNOWN_ENTITY_LABEL = "Entidad pendiente de identificar"
 
+logger = logging.getLogger(__name__)
+
 CLASSIFICATION_REASON_CODES = {
     "missing_essential_fields",
     "unknown_language",
@@ -57,6 +64,9 @@ CLASSIFICATION_REASON_CODES = {
     "manual_label_failed",
     "equivalence_not_found",
     "format_mismatch",
+    "entity_mismatch",
+    "possible_duplicate",
+    "cefr_discrepancy",
 }
 
 SKIPPED_STATES = {
@@ -552,6 +562,9 @@ def aggregate_reasons(certificate: Certificate) -> list[str]:
         missing.append("issue_date")
     if certificate.exam_id is not None and not certificate.equivalence:
         reasons.append("equivalence_not_found")
+    printed_cefr = explicit_cefr(certificate.level_literal)
+    if printed_cefr and certificate.cefr_level and printed_cefr != certificate.cefr_level:
+        reasons.append("cefr_discrepancy")
     if (
         certificate.entity_id is not None
         and certificate.format_score is not None
@@ -620,8 +633,20 @@ def classify_certificate(
         certificate.format_cohort = cohort or ""
         _blend_format_confidence(certificate, format_score)
         reasons = aggregate_reasons(certificate) + date_reasons
+        check = record_consistency(certificate)
+        if check["entity_mismatch"] or check["exam_mismatch"]:
+            reasons.append("entity_mismatch")
+        from documents.services.duplicates import find_duplicate_certificate
+
+        duplicate = find_duplicate_certificate(certificate)
+        certificate.duplicate_of = duplicate
+        if duplicate is not None:
+            reasons.append("possible_duplicate")
         certificate.review_reasons = _merge_reasons(certificate.review_reasons, reasons)
         certificate.save()
+        from documents.services.veracity import maybe_compute_veracity
+
+        maybe_compute_veracity(certificate)
 
         transition_document(
             document,
@@ -641,6 +666,16 @@ def classify_certificate(
         apply_manual_review_label(document, store=store)
         document.refresh_from_db()
     sync_classification_tags(document, store=store)
+
+    check = (certificate.pre_detection or {}).get("consistency") or {}
+    if (check.get("entity_mismatch") or check.get("exam_mismatch")) and not check.get("rerun"):
+        try:
+            rerun_with_resolved_profile(document, certificate)
+        except Exception as exc:  # noqa: BLE001 - rerun must not break classification
+            logger.info(
+                "consistency_rerun_failed",
+                extra={"outcome": "skipped", "error": str(exc)[:200]},
+            )
 
     return ClassificationResult(
         document=document,

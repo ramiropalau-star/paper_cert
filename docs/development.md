@@ -57,3 +57,23 @@ DB_ENGINE=sqlite DJANGO_DEBUG=true .venv/bin/python manage.py runserver
 ## Environment
 
 All runtime configuration comes from environment variables. See `.env.example` for the complete list. Key groups: Django, database, upload and pipeline thresholds, OCR, Ollama, Paperless, internal API, and n8n webhooks.
+
+## Extraction evaluation harness
+
+`documents/services/evaluation.py` implements the offline harness:
+
+- `build_golden_set()` versions golden cases from approved/validated
+  certificates with human-confirmed fields; rejected documents never
+  contribute and new versions never mutate old ones.
+- `run_evaluation()` executes a dry run through `run_model_extraction()` —
+  the same model path as production — without persisting fields, review
+  reasons, or state changes.
+- Metrics cover schema validity, per-field exact/normalized accuracy,
+  missing- and fabricated-value rates, evidence-quote validity, and latency,
+  grouped by issuer and certificate type.
+- `compare_metrics()` reports per-field regressions/improvements against a
+  baseline run; it never changes live configuration.
+
+The `evaluate_extraction` management command wraps build/run/list/show/
+compare. Tests inject a fake `OllamaClient`-compatible object, so no model
+server is needed.

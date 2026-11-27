@@ -369,3 +369,70 @@ def test_terminal_document_is_not_reprocessed(monkeypatch, settings):
 
     assert response.status_code == 200
     assert response.json()["skipped"] is True
+
+
+def test_embedded_pdf_stores_page_layout():
+    document = make_document()
+    ocr = FakeOcr(error=AssertionError("OCR must not run"))
+    store = FakeStore()
+
+    acquire_text(
+        document,
+        data=text_pdf_bytes([LONG_TEXT]),
+        store=store,
+        ocr_client=ocr,
+    )
+
+    page = DocumentPage.objects.get(document=document, page_number=1)
+    assert page.layout is not None
+    assert page.layout["page"]["w"] > 0
+    assert page.layout["page"]["h"] > 0
+    assert page.layout["lines"], "expected at least one text line with bbox"
+    for line in page.layout["lines"]:
+        assert len(line["bbox"]) == 4
+
+
+def test_ocr_pages_have_no_layout():
+    document = make_document(content_type="image/png")
+    ocr = FakeOcr(pages=[ocr_page(1, LONG_TEXT)])
+    store = FakeStore(data=b"not-a-pdf")
+
+    acquire_text(
+        document,
+        data=b"fake image bytes",
+        store=store,
+        ocr_client=ocr,
+    )
+
+    page = DocumentPage.objects.get(document=document, page_number=1)
+    assert page.layout is None
+
+
+def test_embedded_pdf_layout_includes_image_regions():
+    from io import BytesIO as _BytesIO
+
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas as _canvas
+
+    from documents.tests.factories import png_bytes
+
+    buffer = _BytesIO()
+    pdf = _canvas.Canvas(buffer, pagesize=(612, 792))
+    pdf.setFont("Helvetica", 14)
+    pdf.drawString(50, 700, LONG_TEXT)
+    pdf.drawImage(ImageReader(_BytesIO(png_bytes())), 400, 600, 100, 100)
+    pdf.showPage()
+    pdf.save()
+
+    document = make_document()
+    acquire_text(
+        document,
+        data=buffer.getvalue(),
+        store=FakeStore(),
+        ocr_client=FakeOcr(error=AssertionError("OCR must not run")),
+    )
+
+    page = DocumentPage.objects.get(document=document, page_number=1)
+    assert page.layout is not None
+    assert page.layout["images"], "expected at least one image region"
+    assert len(page.layout["images"][0]["bbox"]) == 4

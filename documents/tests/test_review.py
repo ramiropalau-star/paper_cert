@@ -245,6 +245,38 @@ def test_manual_edit_rejects_invalid_dates():
     assert ReviewEvent.objects.count() == 0
 
 
+def test_manual_edit_saves_when_certificate_has_dates():
+    """Regression: localized date rendering (dd/mm/yyyy) made the whole edit
+    form invalid, silently dropping every change on save."""
+    reviewer = make_user("reviewer-dates", ("reviewer",))
+    client = Client()
+    client.force_login(reviewer)
+    document = make_document()
+    certificate = make_certificate(document, exam_date=date(2026, 7, 29))
+
+    response = client.get(reverse("documents:detail", args=[document.pk]) + "?edit=1")
+    content = response.content.decode()
+    assert 'type="date"' in content
+    assert 'value="2026-07-29"' in content
+
+    response = client.post(
+        reverse("documents:edit", args=[document.pk]),
+        {
+            "student_name": certificate.student_name,
+            "language_literal": certificate.language_literal,
+            "entity_literal": certificate.entity_literal,
+            "exam_literal": certificate.exam_literal,
+            "level_literal": certificate.level_literal,
+            "score_literal": certificate.score_literal,
+            "exam_date": "2026-07-29",
+        },
+    )
+
+    assert response.status_code == 302
+    certificate.refresh_from_db()
+    assert certificate.exam_date == date(2026, 7, 29)
+
+
 def test_viewer_cannot_edit(client):
     viewer = make_user("viewer", ("viewer",))
     client.force_login(viewer)
@@ -295,13 +327,31 @@ def test_approve_blocked_when_required_fields_missing():
     client = Client()
     client.force_login(reviewer)
     document = make_document()
-    certificate = make_certificate(document, issue_date=None)
+    certificate = _classified_certificate(document)
+    certificate.student_name = ""
+    certificate.save()
 
     response = client.post(reverse("documents:approve", args=[document.pk]), follow=True)
 
     certificate.refresh_from_db()
     assert certificate.review_status == Certificate.ReviewStatus.PENDING
-    assert "fecha de expedición" in response.content.decode()
+    assert "nombre del alumno" in response.content.decode()
+
+
+def test_approve_allowed_without_issue_date():
+    reviewer = make_user("reviewer-nodate", ("reviewer",))
+    client = Client()
+    client.force_login(reviewer)
+    document = make_document()
+    certificate = _classified_certificate(document)
+    certificate.issue_date = None
+    certificate.save()
+
+    response = client.post(reverse("documents:approve", args=[document.pk]))
+
+    assert response.status_code == 302
+    certificate.refresh_from_db()
+    assert certificate.review_status == Certificate.ReviewStatus.APPROVED
 
 
 def test_viewer_cannot_approve(client):

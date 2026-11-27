@@ -33,10 +33,11 @@ stored literal.
 ### Requirement: Aliases can be scoped globally or per entity
 
 An alias SHALL apply globally to every document when it has no entity scope.
-An alias MAY be scoped to a single catalog entity, in which case it SHALL
-apply only to documents whose extracted entity resolves to that entity.
-Scoped aliases SHALL take precedence over global aliases for the same field
-when both could match.
+An alias MAY be scoped to a single catalog entity. A scoped alias SHALL apply
+when the document's entity resolves to that entity or when issuer pre-detection
+resolves that entity with sufficient confidence before extraction. Scoped
+aliases SHALL take precedence over global aliases for the same field when both
+could match.
 
 #### Scenario: Global alias applies to any document
 
@@ -56,6 +57,20 @@ when both could match.
   field and the document matches the scope
 - **THEN** the entity-scoped alias is preferred for label matching on that
   document
+
+#### Scenario: Pre-detected issuer uses scoped aliases before extraction
+
+- **WHEN** issuer pre-detection resolves entity Cambridge with sufficient
+  confidence before extraction
+- **THEN** active aliases scoped to Cambridge are available to that extraction
+- **AND** a scoped alias can recover a field before a certificate record exists
+
+#### Scenario: Ambiguous pre-detection uses only global aliases
+
+- **WHEN** issuer pre-detection cannot resolve an entity with sufficient
+  confidence
+- **THEN** only active global aliases are used for that extraction
+- **AND** no entity-scoped alias is applied speculatively
 
 ### Requirement: Alias lifecycle is manageable by reviewers
 
@@ -95,3 +110,72 @@ previously empty or unverified.
 - **WHEN** an alias is configured but the document does not contain the
   label or a plausible value near it
 - **THEN** the field remains empty and no value is inferred
+
+### Requirement: Learned aliases require corroboration and lifecycle
+
+The system SHALL store learned aliases with a lifecycle state of candidate,
+active, or rejected, plus support count, confidence, provenance, and scope.
+A learned alias SHALL become active only after corroboration from multiple
+approved certificates or explicit reviewer confirmation. Manual aliases SHALL
+remain authoritative, rejected documents SHALL never teach, and conflicting
+learned aliases SHALL NOT auto-activate.
+
+#### Scenario: Single observation stays a candidate
+
+- **WHEN** a label is observed once in an approved certificate
+- **THEN** it is stored as a candidate and is not used by extraction
+
+#### Scenario: Corroborated alias becomes active
+
+- **WHEN** the same normalized label appears in enough approved certificates
+  for the same field and scope
+- **THEN** the learned alias becomes active for that scope
+
+#### Scenario: Conflict does not auto-activate
+
+- **WHEN** a learned candidate conflicts with an existing active alias for the
+  same field and scope
+- **THEN** it remains a candidate until a reviewer resolves it
+- **AND** extraction keeps using the active alias
+
+#### Scenario: Rejected document never teaches
+
+- **WHEN** a document is rejected
+- **THEN** its labels never create or support an alias
+
+### Requirement: Reviewer corrections can propose alias candidates
+
+When a reviewer corrects a field value or teaches a label, the system MAY
+propose an alias candidate derived from that correction, scoped to the
+certificate's issuer when known. The candidate SHALL NOT become active until
+corroboration or explicit confirmation, and the proposal SHALL record its
+provenance.
+
+#### Scenario: Correction proposes a candidate
+
+- **WHEN** a reviewer corrects a field and the printed label is identifiable
+- **THEN** the system offers to save a candidate alias for that field and issuer
+- **AND** the candidate is not used until confirmed or corroborated
+
+#### Scenario: Reviewer rejects the proposal
+
+- **WHEN** the reviewer dismisses the alias proposal
+- **THEN** no alias is created and the correction is still saved
+
+### Requirement: Alias provenance is visible to reviewers
+
+The alias listing and review detail SHALL show each alias's source (manual or
+learned), lifecycle state, support count, confidence, and scope. Authorized
+reviewers SHALL be able to confirm, reject, deactivate, or reactivate aliases,
+and every change SHALL record the actor and timestamp.
+
+#### Scenario: Reviewer inspects a learned alias
+
+- **WHEN** a reviewer opens the alias listing
+- **THEN** each alias shows its source, state, support, confidence, and scope
+
+#### Scenario: Reviewer rejects a candidate
+
+- **WHEN** a reviewer rejects a candidate alias
+- **THEN** its state becomes rejected and it is not used by extraction
+- **AND** the decision is recorded with actor and timestamp

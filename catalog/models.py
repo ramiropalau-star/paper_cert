@@ -203,7 +203,9 @@ class FormatProfile(TimestampedModel):
     Cohort key is (entity, year); ``exam`` is populated only when enough
     approved samples share entity+exam+year (see APP_FORMAT_MIN_EXAM_SAMPLES).
     ``anchors`` stores ``[{"text": normalized_anchor, "df": int}]`` ranked by
-    document frequency within the cohort.
+    document frequency within the cohort; layout anchors carry
+    ``{"kind": "layout", "feature": token, "df": int}`` instead. ``year`` is
+    null for the entity-level pool profile learned across all years.
     """
 
     entity = models.ForeignKey(Entity, related_name="format_profiles", on_delete=models.CASCADE)
@@ -214,9 +216,23 @@ class FormatProfile(TimestampedModel):
         null=True,
         blank=True,
     )
-    year = models.PositiveIntegerField()
+    year = models.PositiveIntegerField(null=True, blank=True)
     anchors = models.JSONField(default=list, blank=True)
     sample_count = models.PositiveIntegerField(default=0)
+    # Learned per-field value shapes (date order, score/code shape, level
+    # vocabulary) keyed by extraction field name.
+    value_shapes = models.JSONField(default=dict, blank=True)
+    # Measured quality on approved samples: precision, recall, anchor churn.
+    quality = models.JSONField(default=dict, blank=True)
+    # Drift bookkeeping: detected flag plus detail about diverging samples.
+    drift_detected = models.BooleanField(default=False)
+    drift_detail = models.JSONField(default=dict, blank=True)
+    # Monotonic version bumped on every rebuild; ``version_history`` keeps a
+    # bounded snapshot of previous versions for audit.
+    version = models.PositiveIntegerField(default=1)
+    version_history = models.JSONField(default=list, blank=True)
+    provenance = models.JSONField(default=dict, blank=True)
+    last_rebuilt_at = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     deactivated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -237,7 +253,7 @@ class FormatProfile(TimestampedModel):
         ]
 
     def __str__(self) -> str:
-        scope = f"{self.entity.name} {self.year}"
+        scope = f"{self.entity.name} {self.year if self.year else '*'}"
         if self.exam_id:
             scope += f" / {self.exam.name}"
         return f"Format profile: {scope}"

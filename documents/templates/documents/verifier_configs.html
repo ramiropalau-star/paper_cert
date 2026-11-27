@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Verificadores por emisor{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Verificadores por emisor</h1>
+  <p class="muted">Configuración por datos (sin cambios de código) de cómo verificar certificados en el portal del emisor: host, plantilla de URL (<code>{code}</code>, <code>{document_id}</code>, <code>{url}</code>), criterios de éxito en JSON, parser del documento fuente y patrones de campos para comparar. Solo reviewers pueden editarla.</p>
+
+  {% if can_manage %}
+  <h3>Nuevo verificador</h3>
+  <form method="post" class="inline-form">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="create">
+    <input type="text" name="host" placeholder="host (ej. verify.example.org)" required>
+    <input type="text" name="url_template" placeholder="Plantilla URL https://…?code={code}" size="48" required>
+    <input type="text" name="code_pattern" placeholder="Regex del código (opcional)">
+    <input type="number" name="timeout_seconds" value="10" min="1" max="120" step="0.5" aria-label="Timeout (s)">
+    <select name="source_document_parser" aria-label="Parser del documento fuente">
+      {% for value, label in parser_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+    </select>
+    <select name="entity" aria-label="Entidad">
+      <option value="">Cualquier entidad (por host)</option>
+      {% for entity in entities %}<option value="{{ entity.pk }}">{{ entity.name }}</option>{% endfor %}
+    </select>
+    <input type="checkbox" name="is_active" checked> Activo
+    <button type="submit" class="button">Guardar</button>
+    <details>
+      <summary>Criterios y patrones (JSON)</summary>
+      <input type="text" name="success_criteria" placeholder='success_criteria JSON, ej. {"markers": ["verificado"], "require_pdf": true}' size="70">
+      <input type="text" name="source_field_patterns" placeholder='source_field_patterns JSON, ej. {"student_name": "Nombre:\\s*(.+)"}' size="70">
+    </details>
+  </form>
+  {% endif %}
+
+  <table class="data-table">
+    <thead>
+      <tr><th>Host</th><th>Entidad</th><th>URL plantilla</th><th>Parser</th><th>Timeout</th><th>Estado</th><th>Creado</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for config in configs %}
+      <tr>
+        <td>{{ config.host }}</td>
+        <td>{% if config.entity %}{{ config.entity.name }}{% else %}—{% endif %}</td>
+        <td class="muted" title="{{ config.url_template }}">{{ config.url_template|truncatechars:48 }}</td>
+        <td>{{ config.get_source_document_parser_display|default:"—" }}</td>
+        <td>{{ config.timeout_seconds }}s</td>
+        <td>{% if config.is_active %}Activo{% else %}<span class="muted">Inactivo</span>{% endif %}</td>
+        <td class="muted">{{ config.created_at|date:"Y-m-d" }}{% if config.created_by %} · {{ config.created_by.username }}{% endif %}</td>
+        <td>
+          {% if can_manage %}
+          <details>
+            <summary class="link-button">Editar</summary>
+            <form method="post" class="inline-form">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="update">
+              <input type="hidden" name="config_id" value="{{ config.pk }}">
+              <input type="text" name="host" value="{{ config.host }}" required>
+              <input type="text" name="url_template" value="{{ config.url_template }}" size="48" required>
+              <input type="text" name="code_pattern" value="{{ config.code_pattern }}" placeholder="Regex del código">
+              <input type="number" name="timeout_seconds" value="{{ config.timeout_seconds }}" min="1" max="120" step="0.5">
+              <select name="source_document_parser">
+                {% for value, label in parser_choices %}<option value="{{ value }}" {% if config.source_document_parser == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select>
+              <select name="entity">
+                <option value="">Cualquier entidad</option>
+                {% for entity in entities %}<option value="{{ entity.pk }}" {% if config.entity_id == entity.pk %}selected{% endif %}>{{ entity.name }}</option>{% endfor %}
+              </select>
+              <label><input type="checkbox" name="is_active" {% if config.is_active %}checked{% endif %}> Activo</label>
+              <input type="text" name="success_criteria" value="{{ config.success_criteria_json }}" placeholder='{"markers": [...]}' size="60">
+              <input type="text" name="source_field_patterns" value="{{ config.source_field_patterns_json }}" placeholder='{"student_name": "..."}' size="60">
+              <button type="submit" class="button">Guardar</button>
+            </form>
+          </details>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="8" class="muted">No hay verificadores configurados.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p><a class="button" href="{% url 'documents:list' %}">Volver a documentos</a></p>
+</section>
+{% endblock %}

@@ -78,6 +78,7 @@ class DocumentPage(models.Model):
     text = models.TextField(blank=True)
     method = models.CharField(max_length=10, choices=Method.choices)
     ocr_confidence = models.FloatField(null=True, blank=True)
+    layout = models.JSONField(null=True, blank=True)
 
     class Meta:
         ordering = ["document", "page_number"]
@@ -186,6 +187,33 @@ class Certificate(models.Model):
     verified_at = models.DateTimeField(null=True, blank=True)
     verification_evidence = models.JSONField(default=dict, blank=True)
     prompt_version = models.CharField(max_length=50, blank=True)
+    # Deterministic issuer/type pre-detection result recorded before
+    # extraction: {result, confidence, margin, entity, exam, language,
+    # candidates, classifier_used, version}.
+    pre_detection = models.JSONField(default=dict, blank=True)
+    extraction_run = models.ForeignKey(
+        "ExtractionRun",
+        related_name="certificates",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    # Veracity score (0-1 review aid) with its component breakdown.
+    veracity_score = models.FloatField(null=True, blank=True)
+    veracity_components = models.JSONField(default=dict, blank=True)
+    veracity_weights_version = models.CharField(max_length=50, blank=True)
+    veracity_computed_at = models.DateTimeField(null=True, blank=True)
+    # Field-level comparison against a verifier-returned source document.
+    source_comparison = models.JSONField(default=dict, blank=True)
+    # Semantic duplicate link: another live certificate with the same identity
+    # (code match, or corroborated student/exam/date when no code exists).
+    duplicate_of = models.ForeignKey(
+        "self",
+        related_name="duplicates",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -194,6 +222,225 @@ class Certificate(models.Model):
 
     def __str__(self) -> str:
         return self.student_name or f"Certificate for {self.document_id}"
+
+
+class ExtractionRun(models.Model):
+    """One extraction pass over a document, with its configuration metadata."""
+
+    class Status(models.TextChoices):
+        RUNNING = "running", "En curso"
+        COMPLETED = "completed", "Completado"
+        FAILED = "failed", "Fallido"
+
+    document = models.ForeignKey(Document, related_name="extraction_runs", on_delete=models.CASCADE)
+    certificate = models.ForeignKey(
+        Certificate,
+        related_name="extraction_runs",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.RUNNING, db_index=True
+    )
+    model = models.CharField(max_length=200, blank=True)
+    prompt_version = models.CharField(max_length=50, blank=True)
+    profile = models.ForeignKey(
+        "catalog.FormatProfile",
+        related_name="extraction_runs",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    profile_version = models.PositiveIntegerField(null=True, blank=True)
+    pre_detection = models.JSONField(default=dict, blank=True)
+    pass_count = models.PositiveIntegerField(default=1)
+    fallback_used = models.CharField(max_length=30, blank=True, default="")
+    fallback_model = models.CharField(max_length=200, blank=True, default="")
+    latency_ms = models.FloatField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-started_at", "-id"]
+        indexes = [
+            models.Index(fields=["document", "-started_at"], name="extrun_doc_started"),
+            models.Index(fields=["status", "started_at"], name="extrun_status_started"),
+        ]
+
+    def __str__(self) -> str:
+        return f"ExtractionRun {self.pk} ({self.status}) for {self.document_id}"
+
+
+class VerifierConfig(models.Model):
+    """Per-issuer verifier configuration stored as data, not code."""
+
+    class Parser(models.TextChoices):
+        NONE = "", "Sin documento fuente"
+        PDF_TEXT = "pdf_text", "Texto de PDF"
+
+    entity = models.ForeignKey(
+        "catalog.Entity",
+        related_name="verifier_configs",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    host = models.CharField(max_length=253)
+    code_pattern = models.CharField(max_length=300, blank=True, default="")
+    url_template = models.CharField(max_length=500, blank=True, default="")
+    success_criteria = models.JSONField(default=dict, blank=True)
+    source_document_parser = models.CharField(
+        max_length=20, choices=Parser.choices, blank=True, default=""
+    )
+    source_field_patterns = models.JSONField(default=dict, blank=True)
+    timeout_seconds = models.FloatField(default=10.0)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="verifier_configs",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["host", "entity__name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["entity", "host"], name="uniq_verifier_config_entity_host"
+            )
+        ]
+
+    def clean(self):
+        from urllib.parse import urlparse
+
+        from django.core.exceptions import ValidationError
+
+        host = (self.host or "").strip().lower()
+        if not host or "." not in host or " " in host:
+            raise ValidationError({"host": "Host inválido."})
+        if self.code_pattern:
+            try:
+                re.compile(self.code_pattern)
+            except re.error as exc:
+                raise ValidationError({"code_pattern": f"Regex inválido: {exc}"}) from exc
+        if self.url_template:
+            template = self.url_template.strip()
+            parsed = urlparse(template)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValidationError(
+                    {"url_template": "La plantilla debe ser una URL http(s) válida."}
+                )
+            if (parsed.hostname or "").lower() != host:
+                raise ValidationError(
+                    {"url_template": "La plantilla debe apuntar al mismo host configurado."}
+                )
+
+    def __str__(self) -> str:
+        scope = self.entity.name if self.entity_id else "global"
+        return f"VerifierConfig {self.host} ({scope})"
+
+
+class EvaluationRun(models.Model):
+    """One offline dry-run evaluation of extraction against a golden set."""
+
+    class Status(models.TextChoices):
+        QUEUED = "queued", "En cola"
+        RUNNING = "running", "En curso"
+        COMPLETED = "completed", "Completado"
+        FAILED = "failed", "Fallido"
+
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.QUEUED, db_index=True
+    )
+    set_name = models.CharField(max_length=100, default="default")
+    set_version = models.PositiveIntegerField(default=1)
+    config = models.JSONField(default=dict, blank=True)
+    metrics = models.JSONField(default=dict, blank=True)
+    comparison = models.JSONField(default=dict, blank=True)
+    baseline_run = models.ForeignKey(
+        "self",
+        related_name="comparisons",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    code_revision = models.CharField(max_length=100, blank=True)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="evaluation_runs",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    error = models.TextField(blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["set_name", "set_version"], name="evalrun_set_version"),
+            models.Index(fields=["status", "created_at"], name="evalrun_status_created"),
+        ]
+
+    def __str__(self) -> str:
+        return f"EvaluationRun {self.pk} ({self.status})"
+
+
+class EvaluationCase(models.Model):
+    """A golden-set extraction case built from a human-confirmed certificate."""
+
+    set_name = models.CharField(max_length=100, default="default")
+    set_version = models.PositiveIntegerField(default=1)
+    certificate = models.ForeignKey(
+        Certificate,
+        related_name="evaluation_cases",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    entity = models.ForeignKey(
+        "catalog.Entity",
+        related_name="evaluation_cases",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    exam = models.ForeignKey(
+        "catalog.Exam",
+        related_name="evaluation_cases",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    profile_version = models.PositiveIntegerField(null=True, blank=True)
+    source_text = models.TextField(blank=True)
+    expected = models.JSONField(default=dict, blank=True)
+    evidence = models.JSONField(default=dict, blank=True)
+    context = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["set_name", "set_version", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["set_name", "set_version", "certificate"],
+                name="uniq_eval_case_cert_version",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["set_name", "set_version"], name="evalcase_set_version"),
+        ]
+
+    def __str__(self) -> str:
+        return f"EvaluationCase {self.pk} ({self.set_name} v{self.set_version})"
 
 
 class PaperlessSyncState(models.Model):
@@ -269,6 +516,11 @@ class FieldLabelAlias(models.Model):
         MANUAL = "manual", "Manual"
         LEARNED = "learned", "Aprendido"
 
+    class Lifecycle(models.TextChoices):
+        CANDIDATE = "candidate", "Candidato"
+        ACTIVE = "active", "Activo"
+        REJECTED = "rejected", "Rechazado"
+
     field = models.CharField(max_length=30, choices=Field.choices, db_index=True)
     alias = models.CharField(max_length=300)
     normalized_alias = models.CharField(max_length=300)
@@ -281,6 +533,15 @@ class FieldLabelAlias(models.Model):
     )
     scope_key = models.CharField(max_length=50)
     source = models.CharField(max_length=10, choices=Source.choices, default=Source.MANUAL)
+    lifecycle = models.CharField(
+        max_length=10,
+        choices=Lifecycle.choices,
+        default=Lifecycle.ACTIVE,
+        db_index=True,
+    )
+    support_count = models.PositiveIntegerField(default=0)
+    confidence = models.FloatField(null=True, blank=True)
+    provenance = models.JSONField(default=dict, blank=True)
     is_active = models.BooleanField(default=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -299,6 +560,9 @@ class FieldLabelAlias(models.Model):
                 fields=["field", "normalized_alias", "scope_key"],
                 name="uniq_field_alias_scope",
             )
+        ]
+        indexes = [
+            models.Index(fields=["lifecycle", "field", "scope_key"], name="alias_lifecycle_scope"),
         ]
 
     def __str__(self) -> str:

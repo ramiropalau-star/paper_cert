@@ -75,6 +75,21 @@ See `docs/extraction.md` and `docs/review.md`.
 | `APP_FORMAT_MIN_EXAM_SAMPLES` | `3` | Min samples for an exam-scoped format cohort. |
 | `APP_FORMAT_SCORE_THRESHOLD` | `0.4` | Below this format score → `format_mismatch`. |
 | `APP_FORMAT_MAX_SCORE` | `0.5` | Weight of the format score in blended confidence. |
+| `APP_PRE_DETECTION_ENABLED` | `true` | Deterministic issuer/type pre-detection before extraction. |
+| `APP_PRE_DETECTION_CONFIDENCE` | `0.6` | Min confidence for a pre-detection `match`. |
+| `APP_PRE_DETECTION_MARGIN` | `0.15` | Min top-two score margin for a `match`. |
+| `APP_PRE_DETECTION_CLASSIFIER_ENABLED` | `false` | One bounded classifier call on ambiguous pre-detection. |
+| `APP_PROFILE_GUIDED_EXTRACTION_ENABLED` | `true` | Inject issuer profile context + candidate pre-pass on a detected match. |
+| `APP_PROFILE_CONTEXT_MAX_CHARS` | `4000` | Character budget for the profile-guided prompt section. |
+| `APP_EXTRACTION_FALLBACK_MODEL` | empty | Optional fallback model for missing critical fields (bounded, one call). |
+| `APP_VERACITY_ENABLED` | `true` | Veracity score computation and UI. |
+| `APP_REVIEW_UI_ENABLED` | `true` | Review UI additions (veracity badge, inline thumbnail, side document). |
+| `APP_ALIAS_CORROBORATION_MIN` | `2` | Independent observations before a learned alias activates. |
+| `APP_PROFILE_QUALITY_FLOOR` | `0.5` | Profile quality below which it is not used for guidance. |
+| `APP_PROFILE_DRIFT_THRESHOLD` | `0.3` | Anchor divergence that flags profile drift. |
+| `APP_EVAL_REGRESSION_TOLERANCE` | `0.02` | Accuracy delta counted as regression in eval comparisons. |
+| `APP_CODE_REVISION` | empty | Code revision stamped on evaluation runs. |
+| `APP_QR_DECODE_ENABLED` | `false` | QR payload decoding during verification. |
 
 ## Paperless-ngx (app side)
 
@@ -156,3 +171,50 @@ Password-reset links expire after one hour (fixed `PASSWORD_RESET_TIMEOUT`).
 | --- | --- | --- |
 | `LOG_LEVEL` | `INFO` | Root log level. |
 | `LOG_FORMAT` | `keyvalue` | `keyvalue` or `json` output. |
+
+## Field-label alias lifecycle
+
+`FieldLabelAlias` rows carry a lifecycle (`candidate` → `active` /
+`rejected`), a support count, a confidence, provenance, and an optional
+entity scope. Only `active` aliases reach extraction.
+
+- **Manual aliases** (taught from the review screen or the alias admin)
+  are created `active` and are authoritative.
+- **Learned aliases** start as `candidate` with `support_count=1`. Each
+  additional observation from a *different* approved certificate raises
+  support; at `APP_ALIAS_CORROBORATION_MIN` (default `2`) distinct
+  observations the alias activates — unless the same printed label is
+  already active for another field in the same scope, in which case it
+  stays a candidate flagged `conflict` for a reviewer.
+- **Reviewer corrections** can propose candidates scoped to the
+  certificate's entity; they never activate without corroboration or an
+  explicit **Confirmar** in `/aliases/` (reviewer+ only). **Rechazar**
+  marks the alias `rejected` and it is never used again.
+- Rejected documents never teach aliases.
+
+### Pre-detection scoping
+
+Before classification there is no resolved entity, so alias scope is
+chosen in this order: the certificate's resolved entity (re-extraction),
+then a confident pre-detection `match` (`aliases_for_pre_detection`),
+otherwise global aliases only. An ambiguous pre-detection never applies
+entity-scoped aliases speculatively.
+
+## Verifier configuration
+
+`VerifierConfig` stores per-issuer source-verification settings as data:
+`host` (domain or parent domain matched against the certificate's
+verification URL host), `url_template` (`{code}`, `{document_id}`, `{url}`
+placeholders), `code_pattern` (regex), `success_criteria` JSON
+(`{"markers": [...], "require_pdf": true}`), `source_document_parser`
+(`pdf_text` extracts fields from a returned PDF for comparison),
+`source_field_patterns` JSON (`{field: regex}` with one capture group),
+`timeout_seconds` (1–120), and `is_active`. Seeded defaults for `uv.es`
+and `tramita.gva.es` ship via `seed_catalog`; entity-scoped rows take
+precedence over host-global rows for the same host.
+
+Related flags: `APP_VERACITY_ENABLED` (veracity scoring),
+`APP_REVIEW_UI_ENABLED` (review UI additions), `APP_QR_DECODE_ENABLED`
+(optional QR decode), `APP_FORMAT_VERIFIED_WEIGHT` (verified-sample weight
+in profiles), `APP_PROFILE_QUALITY_FLOOR` / `APP_PROFILE_DRIFT_THRESHOLD`
+(profile quality gates).

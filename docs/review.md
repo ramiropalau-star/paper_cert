@@ -78,6 +78,8 @@ Field warnings:
 | `non_certificate` | No parece un certificado de idioma |
 | `equivalence_not_found` | Sin equivalencia UV L2 para el examen |
 | `format_mismatch` | El formato no coincide con el perfil conocido del emisor |
+| `entity_mismatch` | Entidad detectada en discrepancia |
+| `source_mismatch` | Discrepancia con el documento fuente |
 
 Pipeline-stage codes (`ocr_failed`, `insufficient_text`,
 `low_ocr_confidence`, `original_unavailable`, `model_unavailable`, …) are
@@ -141,8 +143,9 @@ again.
 ## Approve and reject
 
 - **Approve** requires `viewer`-less roles (`reviewer`/`admin`) and all
-  required fields: student name, resolved language, resolved entity, level
-  or score, and issue date. Missing fields block approval and are listed in
+  required fields: student name, resolved language, resolved entity, and
+  level or score. The issue date is not required — certificates without one
+  can still be approved. Missing fields block approval and are listed in
   the error message. Approval sets `review_status = approved`, moves the
   document to `approved`, records an `approve` event, and removes the
   `Otros` Paperless label.
@@ -204,7 +207,13 @@ until it is approved. Validated records appear in the report's
 `GET /documents/<id>/original/` streams the original file from Paperless
 through Django (authenticated, viewer role or above) with the detected
 content type, so reviewers can inspect the document inside the review page
-without logging into Paperless. The detail page embeds it in an iframe.
+without logging into Paperless. The detail page embeds it in an iframe inside the review layout: on wide
+screens the source document and the extracted data render side by side, and
+on narrow screens the document stacks below the data — always on initial
+load, never behind a click. When no original exists, the panel says so
+explicitly. The list view shows a lazy-loaded inline thumbnail per row that
+links to the review detail; a separate zoom action opens a modal overlay
+(close button, backdrop click, or Escape — focus returns to the trigger).
 
 ## Learning from review
 
@@ -237,3 +246,21 @@ reason is emitted when the score falls below `APP_FORMAT_SCORE_THRESHOLD`
 samples (`APP_FORMAT_MIN_SAMPLES`) or half the cohort, whichever is
 stricter, so single-document quirks never define a format. See
 `catalog.FormatProfile` and `documents/services/format_profile.py`.
+
+## Veracity score
+
+Each classified certificate gets a 0–1 `veracity_score` (feature flag
+`APP_VERACITY_ENABLED`) blending four weighted components: source
+verification status (0.40), format/profile match (0.25), label-value
+consistency (0.20), and extraction evidence coverage (0.15) — weights
+version `veracity-v1`, stored with the component breakdown on the
+certificate. The score is a review aid only: it never approves, validates,
+or delivers, and missing scores render as "no disponible", never as zero.
+
+The document list shows the numeric value with a high/medium/low label and
+derives the row color from that band (text label always present, so color
+is never the only cue); the format score remains a separate badge. The
+review detail shows the breakdown with human labels and flags the weakest
+component; review reasons stay visible even at high scores. Low-quality or
+drifting issuer profiles reduce only the format component's positive
+evidence.

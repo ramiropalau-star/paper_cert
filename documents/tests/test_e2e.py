@@ -341,3 +341,54 @@ def test_duplicate_upload_creates_single_record():
     assert second.duplicate is True
     assert second.document.pk == first.document.pk
     assert Document.objects.count() == 1
+
+
+def test_full_pipeline_with_profile_and_veracity():
+    """10.1: upload -> pre-detection -> profile-guided extraction ->
+    classification -> veracity -> review -> approval."""
+    from catalog.models import FormatProfile
+    from documents.models import ExtractionRun
+    from documents.tests.factories import make_format_profile
+
+    entity = Entity.objects.get(name="Cambridge English")
+    make_format_profile(entity, anchors=[{"text": "cambridge english", "df": 2}])
+
+    document, store, llm = run_pipeline(
+        text_pdf_bytes(), "cert.pdf", "application/pdf", llm_payload=payload_dict()
+    )
+
+    certificate = document.certificate
+
+    # Pre-detection persisted on certificate and ExtractionRun.
+    assert certificate.pre_detection["result"] in {"match", "ambiguous"}
+    assert "confidence" in certificate.pre_detection
+    run = ExtractionRun.objects.get(document=document)
+    assert run.pre_detection["result"] == certificate.pre_detection["result"]
+    assert run.pre_detection["confidence"] == certificate.pre_detection["confidence"]
+    assert run.status == ExtractionRun.Status.COMPLETED
+
+    # Profile-guided extraction: the Cambridge profile matched and its
+    # context reached the prompt; version recorded on the run.
+    profile = FormatProfile.objects.get(entity=entity)
+    assert run.profile_id == profile.pk
+    assert run.profile_version == profile.version
+
+    # Classification + veracity: score persisted with breakdown and weights.
+    assert certificate.format_score is not None
+    assert certificate.veracity_score is not None
+    assert 0.0 <= certificate.veracity_score <= 1.0
+    assert certificate.veracity_weights_version
+    assert set(certificate.veracity_components["components"]) >= {
+        "source",
+        "format",
+        "consistency",
+        "evidence",
+    }
+    assert document.processing_state == Document.ProcessingState.PENDING_REVIEW.value
+
+    # Review -> approval succeeds and teaches from the decision.
+    outcome = approve_certificate(certificate, actor=None, store=store)
+    assert outcome.ok is True
+    document.refresh_from_db()
+    assert document.processing_state == Document.ProcessingState.APPROVED.value
+    assert certificate.review_status == Certificate.ReviewStatus.APPROVED

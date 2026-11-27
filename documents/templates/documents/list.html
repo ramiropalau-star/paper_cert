@@ -132,13 +132,26 @@
       <tbody id="docs-tbody">
         {% for document in page %}
           {% with certificate=document.certificate %}
-          <tr{% if document.format_doubtful %} class="row-format-warn" title="Confianza de formato baja o no evaluable"{% endif %}>
+          <tr{% if certificate.veracity_band %} class="row-veracity-{{ certificate.veracity_band }}"{% elif document.format_doubtful %} class="row-format-warn" title="Confianza de formato baja o no evaluable"{% endif %}>
             <td class="col-preview">
               {% if document.paperless_document_id %}
-                <button type="button" class="icon-btn preview-btn"
-                        data-url="{% url 'documents:original' document.pk %}"
-                        data-name="{{ document.original_filename }}"
-                        title="Vista previa" aria-label="Vista previa de {{ document.original_filename }}">👁</button>
+                {% if review_ui_enabled %}
+                  <a class="thumb-link" href="{% url 'documents:detail' document.pk %}"
+                     aria-label="Abrir revisión de {{ document.original_filename }}">
+                    <img class="doc-thumb" loading="lazy" decoding="async"
+                         src="{% url 'documents:thumbnail' document.pk %}"
+                         alt="">
+                  </a>
+                  <button type="button" class="icon-btn preview-btn"
+                          data-url="{% url 'documents:original' document.pk %}"
+                          data-name="{{ document.original_filename }}"
+                          title="Ampliar" aria-label="Ampliar vista de {{ document.original_filename }}">🔍</button>
+                {% else %}
+                  <a class="icon-btn" href="{% url 'documents:detail' document.pk %}"
+                     title="Abrir revisión" aria-label="Abrir revisión de {{ document.original_filename }}">👁</a>
+                {% endif %}
+              {% else %}
+                <span class="thumb-placeholder" title="Sin original disponible">—</span>
               {% endif %}
             </td>
             <td>
@@ -149,6 +162,14 @@
                       title="Confianza de formato {{ certificate.format_score|floatformat:2 }}{% if certificate.format_cohort %} · {{ certificate.format_cohort }}{% endif %}">Formato {{ certificate.format_score|floatformat:2 }}</span>
               {% elif document.format_doubtful %}
                 <span class="format-badge band-low" title="Existe perfil de formato para la entidad pero no se pudo puntuar">Formato s/d</span>
+              {% endif %}
+              {% if review_ui_enabled %}
+                {% if certificate.veracity_info %}
+                  <span class="veracity-badge band-{{ certificate.veracity_info.band }}"
+                        title="Veracidad {{ certificate.veracity_info.raw }} — puntuación de revisión, no prueba de autenticidad">Veracidad {{ certificate.veracity_info.percent }}% · {{ certificate.veracity_info.band_label }}</span>
+                {% elif certificate %}
+                  <span class="veracity-badge band-none" title="No se calculó puntuación de veracidad">Veracidad no disponible</span>
+                {% endif %}
               {% endif %}
             </td>
             <td>{{ document.npa|default:"—" }}</td>
@@ -349,12 +370,15 @@
     var lightbox = document.getElementById("lightbox");
     var frame = document.getElementById("lightbox-frame");
     var name = document.getElementById("lightbox-name");
+    var lastTrigger = null;
     function closeLightbox() {
       lightbox.hidden = true;
       frame.removeAttribute("src");
+      if (lastTrigger) { lastTrigger.focus(); lastTrigger = null; }
     }
     table.querySelectorAll(".preview-btn").forEach(function (btn) {
       btn.addEventListener("click", function () {
+        lastTrigger = btn;
         name.textContent = btn.dataset.name;
         frame.src = btn.dataset.url;
         lightbox.hidden = false;

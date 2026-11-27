@@ -709,6 +709,55 @@ def test_score_fallback_fills_empty_score():
     assert "score_literal" in certificate.unverified_fields
 
 
+def test_malformed_score_set_recovers_overall_score():
+    document = make_document()
+    add_page(
+        document,
+        1,
+        PAGE_TEXT
+        + "\nOverall Score\n179\nCEFR Level\nB2\nResults Score\n"
+        + "Pass at Grade A\n200 — 210\nPass at Grade B\n193 — 199\n",
+    )
+    data = payload_dict(score=field("{175, 183}"))
+    llm = FakeLlm([json.dumps(data)])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    certificate = Certificate.objects.get(document=document)
+    assert certificate.score_literal == "179"
+    assert "score_literal" in certificate.unverified_fields
+
+
+def test_trailing_overall_score_label_recovers_value():
+    document = make_document()
+    add_page(
+        document,
+        1,
+        PAGE_TEXT
+        + "\nMODULE SCORE A2 (51–80) B1 (81–110) B2 (111–140)\n"
+        + "CEFR LEVEL\nB2 114\nOVERALL SCOREOVERALL CEFR LEVEL\n",
+    )
+    data = payload_dict(score={"value": None, "evidence": None, "confidence": None})
+    llm = FakeLlm([json.dumps(data)])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    certificate = Certificate.objects.get(document=document)
+    assert certificate.score_literal == "114"
+
+
+def test_bracketed_scalar_score_is_unwrapped():
+    document = make_document()
+    add_page(document, 1, PAGE_TEXT)
+    data = payload_dict(score=field("[114]"))
+    llm = FakeLlm([json.dumps(data)])
+
+    extract_certificate(document, llm=llm, store=FakeStore())
+
+    certificate = Certificate.objects.get(document=document)
+    assert certificate.score_literal == "114"
+
+
 def test_issue_date_fallback_fills_empty_dates():
     document = make_document()
     add_page(

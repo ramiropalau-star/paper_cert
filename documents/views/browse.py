@@ -16,6 +16,7 @@ from catalog.models import Entity, Equivalence, Exam, Language
 from core.permissions import ROLE_VIEWER, can_delete_documents, role_required
 from documents.filters import doubtful_format_q, filter_documents
 from documents.models import Certificate, Document
+from documents.review_display import veracity_band, veracity_display
 from documents.services.classification import equivalence_tooltip, matching_equivalence
 from documents.services.paperless import PaperlessError, build_document_store
 
@@ -68,6 +69,11 @@ def document_list(request):
         if getattr(document, "certificate", None) is not None
     ]
     _attach_equivalence_info(certificates)
+    review_ui_enabled = bool(settings.APP.get("review_ui_enabled", True))
+    if review_ui_enabled:
+        for certificate in certificates:
+            certificate.veracity_info = veracity_display(certificate.veracity_score)
+            certificate.veracity_band = veracity_band(certificate.veracity_score)
 
     return render(
         request,
@@ -85,6 +91,7 @@ def document_list(request):
             "verification": request.GET.get("verification", ""),
             "format": request.GET.get("format", ""),
             "format_threshold": float(settings.APP.get("format_score_threshold", 0.4)),
+            "review_ui_enabled": review_ui_enabled,
             "verification_choices": Certificate.VerificationStatus.choices,
             "languages": Language.objects.filter(is_active=True),
             "entities": Entity.objects.filter(is_active=True),

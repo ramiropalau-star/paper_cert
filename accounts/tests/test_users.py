@@ -324,4 +324,4 @@ def test_can_manage_users_context():
         client = Client()
         client.force_login(user)
         response = client.get(reverse("home"))
-        assert ("Usuarios" in response.content.decode()) is expected
+        assert response.context["can_manage_users"] is expected

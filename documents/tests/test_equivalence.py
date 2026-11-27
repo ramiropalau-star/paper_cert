@@ -135,6 +135,36 @@ def test_exam_without_equivalence_routes_to_review():
     assert "equivalence_not_found" in certificate.review_reasons
 
 
+def test_cefr_discrepancy_flagged_when_printed_level_differs():
+    from documents.services.classification import aggregate_reasons
+
+    document = make_document()
+    certificate = make_certificate(
+        document,
+        level_literal="CEFR Level B2 (ISE II)",
+        score_literal="89",
+    )
+    certificate.cefr_level = "B1"
+    certificate.save(update_fields=["cefr_level"])
+
+    reasons = aggregate_reasons(certificate)
+
+    assert "cefr_discrepancy" in reasons
+
+
+def test_cefr_discrepancy_not_flagged_when_levels_match():
+    from documents.services.classification import aggregate_reasons
+
+    document = make_document()
+    certificate = make_certificate(document, level_literal="B2 First", score_literal="180")
+    certificate.cefr_level = "B2"
+    certificate.save(update_fields=["cefr_level"])
+
+    reasons = aggregate_reasons(certificate)
+
+    assert "cefr_discrepancy" not in reasons
+
+
 def test_manual_equivalence_edit_is_audited():
     document = make_document()
     certificate = make_certificate(document, equivalence="")

@@ -5,22 +5,43 @@ from django import forms
 from catalog.models import CefrLevel, Entity, Exam, Language
 
 
+def _text_field(**kwargs) -> forms.CharField:
+    return forms.CharField(
+        widget=forms.TextInput(attrs={"placeholder": kwargs.pop("placeholder")}), **kwargs
+    )
+
+
 class CertificateEditForm(forms.Form):
-    student_name = forms.CharField(max_length=300, required=False)
-    language_literal = forms.CharField(max_length=200, required=False)
-    entity_literal = forms.CharField(max_length=300, required=False)
-    issuing_body_literal = forms.CharField(max_length=300, required=False)
-    test_center_literal = forms.CharField(max_length=300, required=False)
-    exam_literal = forms.CharField(max_length=300, required=False)
-    level_literal = forms.CharField(max_length=200, required=False)
-    score_literal = forms.CharField(max_length=200, required=False)
-    certificate_code = forms.CharField(max_length=200, required=False)
+    student_name = _text_field(max_length=300, required=False, placeholder="Nombre y apellidos")
+    language_literal = _text_field(
+        max_length=200, required=False, placeholder="Idioma tal como aparece en el certificado"
+    )
+    entity_literal = _text_field(
+        max_length=300, required=False, placeholder="Entidad certificadora tal como aparece"
+    )
+    issuing_body_literal = _text_field(
+        max_length=300, required=False, placeholder="Organismo emisor"
+    )
+    test_center_literal = _text_field(
+        max_length=300, required=False, placeholder="Centro de examen"
+    )
+    exam_literal = _text_field(max_length=300, required=False, placeholder="Examen o certificación")
+    level_literal = _text_field(
+        max_length=200, required=False, placeholder="Nivel literal, p. ej. B2"
+    )
+    score_literal = _text_field(
+        max_length=200, required=False, placeholder="Puntuación, p. ej. 180"
+    )
+    certificate_code = _text_field(
+        max_length=200, required=False, placeholder="Código del certificado"
+    )
     cefr_level = forms.ChoiceField(choices=[("", "—")] + list(CefrLevel.choices), required=False)
     equivalence = forms.ChoiceField(choices=[("", "—")] + list(CefrLevel.choices), required=False)
-    issue_date = forms.DateField(required=False)
-    exam_date = forms.DateField(required=False)
-    result_date = forms.DateField(required=False)
-    detected_date = forms.DateField(required=False)
+    date_widget = forms.DateInput(format="%Y-%m-%d", attrs={"type": "date"})
+    issue_date = forms.DateField(required=False, widget=date_widget)
+    exam_date = forms.DateField(required=False, widget=date_widget)
+    result_date = forms.DateField(required=False, widget=date_widget)
+    detected_date = forms.DateField(required=False, widget=date_widget)
     language = forms.ModelChoiceField(
         queryset=Language.objects.filter(is_active=True), required=False
     )

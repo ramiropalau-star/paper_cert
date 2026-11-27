@@ -11,15 +11,17 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 from pydantic import BaseModel, Field, ValidationError
 
-from documents.models import Certificate, Document
+from documents.models import Certificate, Document, ExtractionRun
 from documents.services.classification import parse_date_text
 from documents.services.field_aliases import aliases_for_document
 from documents.services.labels import apply_manual_review_label
@@ -320,9 +322,9 @@ def document_text(document: Document) -> str:
 def _alias_hint_section(alias_map: dict[str, list[str]]) -> str:
     """Render configured field-label aliases as extra prompt context."""
     lines = []
-    for field, aliases in sorted(alias_map.items()):
+    for field_name, aliases in sorted(alias_map.items()):
         if aliases:
-            lines.append(f"  - {field}: {', '.join(repr(a) for a in aliases)}")
+            lines.append(f"  - {field_name}: {', '.join(repr(a) for a in aliases)}")
     if not lines:
         return ""
     return (
@@ -332,15 +334,24 @@ def _alias_hint_section(alias_map: dict[str, list[str]]) -> str:
 
 
 def build_messages(
-    text: str, alias_map: dict[str, list[str]] | None = None
+    text: str,
+    alias_map: dict[str, list[str]] | None = None,
+    *,
+    profile_context: str = "",
+    candidates_hint: str = "",
 ) -> list[dict[str, str]]:
     hint = _alias_hint_section(alias_map or {})
+    context = ""
+    if profile_context:
+        context += profile_context + "\n\n"
+    if candidates_hint:
+        context += candidates_hint
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
             "content": (
-                hint + "Extract the certificate data from the following document "
+                hint + context + "Extract the certificate data from the following document "
                 "text and answer with JSON matching the schema.\n\n"
                 "<document>\n"
                 f"{text}\n"
@@ -398,10 +409,15 @@ def _persist_certificate(
     document: Document,
     payload: ExtractionPayload,
     unverified_fields: set[str] | None = None,
+    *,
+    pre_detection: dict[str, Any] | None = None,
+    extraction_run: ExtractionRun | None = None,
 ) -> Certificate:
     evidence: dict[str, Any] = {}
     field_confidence: dict[str, float] = {}
     defaults: dict[str, Any] = {
+        "pre_detection": pre_detection or {},
+        "extraction_run": extraction_run,
         "is_language_certificate": payload.is_language_certificate,
         "multiple_certificates_suspected": payload.multiple_certificates_suspected,
         "confidence": payload.confidence,
@@ -611,6 +627,14 @@ def _fallback_student_name(
 
 
 _SCORE_OVER_RE = re.compile(r"(\d{1,3}(?:[.,]\d{1,2})?)\s*/\s*100\b")
+_SCORE_OVERALL_RE = re.compile(
+    r"(?i)\b(?:overall|global)\s+(?:score|result|mark|grade|puntuaci[oó]n|nota)\b"
+    r"[\s:.\-–—·]{0,15}(\d{1,3}(?:[.,]\d{1,2})?)"
+)
+_SCORE_TRAIL_RE = re.compile(
+    r"(?i)(\d{1,3}(?:[.,]\d{1,2})?)[\s:.\-–—·]{0,15}"
+    r"(?:overall|global)\s*(?:score|result|mark|grade|puntuaci[oó]n|nota)"
+)
 _SCORE_LABEL_RE = re.compile(
     r"(?i)\b(?:overall\s+|global\s+)?(?:score|puntuaci[oó]n|nota(?:\s+final)?|"
     r"qualificaci[oó](?:\s+final)?|calificaci[oó]n|grade|result|marks?)\b"
@@ -666,6 +690,32 @@ def _alias_fold(text: str) -> str:
     return " ".join(folded.split()).casefold()
 
 
+_SCORE_JUNK_RE = re.compile(r"[{}\[\]<>]")
+_SCORE_SCALAR_RE = re.compile(r"\d{1,3}(?:[.,]\d{1,2})?(?:\s*/\s*\d{1,3}(?:[.,]\d{1,2})?)?")
+
+
+def _sanitize_score_value(payload: ExtractionPayload) -> None:
+    """Repair or drop malformed model score literals.
+
+    Models occasionally emit set/list notation ("{175, 183}", "[114]")
+    instead of a scalar. A bracketed single scalar is unwrapped; anything
+    else is cleared so the deterministic fallback can recover the real
+    overall score.
+    """
+    value = (payload.score.value or "").strip()
+    if not _SCORE_JUNK_RE.search(value):
+        return
+    inner = value.strip(" \t{}[]()<>").strip()
+    if _SCORE_SCALAR_RE.fullmatch(inner):
+        payload.score = FieldValue(
+            value=inner,
+            evidence=payload.score.evidence,
+            confidence=payload.score.confidence,
+        )
+    else:
+        payload.score = FieldValue(value=None, evidence=None, confidence=None)
+
+
 def _fallback_score(
     page_texts: dict[int, str], alias_labels: tuple[str, ...] = ()
 ) -> FieldValue | None:
@@ -678,7 +728,7 @@ def _fallback_score(
     for page_number in sorted(page_texts):
         text = page_texts[page_number]
         folded_text = _alias_fold(text)
-        for pattern in (_SCORE_OVER_RE, _SCORE_LABEL_RE):
+        for pattern in (_SCORE_OVER_RE, _SCORE_OVERALL_RE, _SCORE_TRAIL_RE, _SCORE_LABEL_RE):
             match = pattern.search(text)
             if match is None:
                 continue
@@ -782,7 +832,7 @@ def _candidate_key(candidate: DateCandidate) -> tuple[str, str]:
     return ("text", _norm_text(candidate.text))
 
 
-def _harvest_dates(document: Document, payload: ExtractionPayload) -> list[DateCandidate]:
+def _harvest_dates(page_texts: dict[int, str], payload: ExtractionPayload) -> list[DateCandidate]:
     """Find date-like patterns the model missed, as ``unknown`` candidates.
 
     Scans every page for numeric and multilingual month-name dates,
@@ -790,7 +840,6 @@ def _harvest_dates(document: Document, payload: ExtractionPayload) -> list[DateC
     candidates the model already returned (by parsed date or normalized
     text). Role is ``unknown`` unless a label nearby suggests otherwise.
     """
-    page_texts = _page_texts(document)
     seen = {_candidate_key(candidate) for candidate in payload.dates}
     harvested: list[DateCandidate] = []
     for page_number in sorted(page_texts):
@@ -913,6 +962,176 @@ def _call_model(
     raise last_error or ValueError("extraction produced no output")
 
 
+@dataclass
+class ModelExtraction:
+    """Result of the model pass plus deterministic fallbacks. Persists nothing."""
+
+    payload: ExtractionPayload | None = None
+    unverified_fields: set[str] = field(default_factory=set)
+    error: str = ""
+    error_code: str = ""
+    pass_count: int = 1
+    latency_ms: float | None = None
+    fallback_used: str = ""
+    fallback_model: str = ""
+    fallback_error: str = ""
+
+
+def run_model_extraction(
+    text: str,
+    page_texts: dict[int, str],
+    alias_map: dict[str, list[str]],
+    llm: OllamaClient,
+    *,
+    messages: list[dict[str, str]] | None = None,
+    profile_context: str = "",
+    fallback_llm: OllamaClient | None = None,
+) -> ModelExtraction:
+    """Run the extraction model and deterministic fallbacks without persisting.
+
+    Shared by the live pipeline (``extract_certificate``) and the offline
+    evaluation harness: model call, evidence validation, deterministic
+    fallbacks for missed name/score/issue-date, one bounded focus pass for
+    missing critical fields, and date harvesting.
+    """
+    started = time.monotonic()
+    pass_count = 1
+    candidates = None
+    if profile_context:
+        from documents.services.candidates import (
+            candidates_hint,
+            extract_candidates,
+        )
+
+        candidates = extract_candidates(page_texts, alias_map)
+    try:
+        payload = _call_model(
+            llm,
+            text,
+            page_texts,
+            messages=messages
+            if messages is not None
+            else build_messages(
+                text,
+                alias_map,
+                profile_context=profile_context,
+                candidates_hint=candidates_hint(candidates) if candidates else "",
+            ),
+        )
+    except OllamaError as exc:
+        return ModelExtraction(error=str(exc), error_code="model_unavailable")
+    except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+        return ModelExtraction(
+            error=f"Model output failed validation: {exc}", error_code="invalid_extraction"
+        )
+
+    unverified_names = _validate_evidence(payload, page_texts)
+    unverified_attrs = {LITERAL_FIELDS[name] for name in unverified_names}
+
+    if candidates is not None:
+        from documents.services.candidates import apply_candidates
+
+        unverified_attrs |= apply_candidates(payload, candidates, page_texts)
+
+    _sanitize_score_value(payload)
+
+    name_aliases = tuple(alias_map.get("student_name", ()))
+    score_aliases = tuple(alias_map.get("score", ()))
+    issue_aliases = tuple(alias_map.get("issue_date", ()))
+
+    if not (payload.student_name.value or "").strip():
+        fallback = _fallback_student_name(page_texts, name_aliases)
+        if fallback is not None:
+            payload.student_name = fallback
+            unverified_attrs.add("student_name")
+
+    if not (payload.score.value or "").strip():
+        fallback = _fallback_score(page_texts, score_aliases)
+        if fallback is not None:
+            payload.score = fallback
+            unverified_attrs.add("score_literal")
+
+    if not _has_issue_date(payload):
+        fallback = _fallback_issue_date(page_texts, issue_aliases)
+        if fallback is not None:
+            payload.dates.append(fallback)
+            unverified_attrs.add("issue_date")
+
+    missing = []
+    if not (payload.score.value or "").strip():
+        missing.append("score")
+    if not _has_issue_date(payload):
+        missing.append("issue date")
+    if missing:
+        try:
+            focused = _call_model(
+                llm,
+                text,
+                page_texts,
+                messages=build_focus_messages(text, missing, alias_map),
+            )
+            pass_count = 2
+            _merge_focus(payload, focused)
+            unverified_attrs |= {
+                LITERAL_FIELDS[name] for name in _validate_evidence(payload, page_texts)
+            }
+        except Exception as exc:
+            logger.info(
+                "extraction_second_pass_failed",
+                extra={"outcome": "skipped", "error": str(exc)[:200]},
+            )
+
+    fallback_used = ""
+    fallback_model_name = ""
+    fallback_error = ""
+    still_missing = []
+    if not (payload.score.value or "").strip():
+        still_missing.append("score")
+    if not _has_issue_date(payload):
+        still_missing.append("issue date")
+    configured_model = str(settings.APP.get("extraction_fallback_model") or "")
+    if still_missing and (configured_model or fallback_llm is not None):
+        client = fallback_llm
+        owns_client = False
+        if client is None:
+            client = OllamaClient(model=configured_model)
+            owns_client = True
+        try:
+            focused = _call_model(
+                client,
+                text,
+                page_texts,
+                messages=build_focus_messages(text, still_missing, alias_map),
+            )
+            pass_count += 1
+            _merge_focus(payload, focused)
+            unverified_attrs |= {
+                LITERAL_FIELDS[name] for name in _validate_evidence(payload, page_texts)
+            }
+            fallback_used = "fallback_model"
+            fallback_model_name = configured_model or str(getattr(client, "model", "") or "custom")
+        except Exception as exc:  # noqa: BLE001 - fallback failure keeps primary result
+            fallback_error = str(exc)[:200]
+            logger.info(
+                "extraction_fallback_failed",
+                extra={"outcome": "skipped", "error": fallback_error},
+            )
+        finally:
+            if owns_client:
+                client.close()
+
+    payload.dates.extend(_harvest_dates(page_texts, payload))
+    return ModelExtraction(
+        payload=payload,
+        unverified_fields=unverified_attrs,
+        pass_count=pass_count,
+        latency_ms=round((time.monotonic() - started) * 1000, 1),
+        fallback_used=fallback_used,
+        fallback_model=fallback_model_name,
+        fallback_error=fallback_error,
+    )
+
+
 def extract_certificate(
     document: Document,
     *,
@@ -955,84 +1174,108 @@ def extract_certificate(
                 state=Document.ProcessingState.PENDING_REVIEW.value,
             )
 
-        alias_map = aliases_for_document(document)
+        run = ExtractionRun.objects.create(document=document)
+        pre_detection: dict[str, Any] = {}
+
         selected_llm = selected_llm or build_ollama_client()
-        try:
-            payload = _call_model(
-                selected_llm,
-                text,
-                _page_texts(document),
-                messages=build_messages(text, alias_map),
+        page_texts = _page_texts(document)
+
+        if settings.APP.get("pre_detection_enabled", True):
+            from documents.services.pre_detection import detect_with_fallback
+
+            pre_detection, _ = detect_with_fallback(text, selected_llm)
+
+        certificate = getattr(document, "certificate", None)
+        if certificate is not None and certificate.entity_id:
+            alias_map = aliases_for_document(document)
+        elif pre_detection.get("result") == "match":
+            from documents.services.field_aliases import aliases_for_pre_detection
+
+            alias_map = aliases_for_pre_detection(pre_detection)
+        else:
+            alias_map = aliases_for_document(document)
+
+        profile = None
+        profile_context = ""
+        if (
+            settings.APP.get("profile_guided_extraction_enabled", True)
+            and pre_detection.get("result") == "match"
+            and pre_detection.get("entity_id")
+        ):
+            from documents.services.profile_context import profile_context_for
+
+            profile, profile_context = profile_context_for(
+                pre_detection["entity_id"], pre_detection.get("exam_id")
             )
-        except OllamaError as exc:
+
+        outcome = run_model_extraction(
+            text, page_texts, alias_map, selected_llm, profile_context=profile_context
+        )
+        if outcome.error_code == "model_unavailable":
+            run.status = ExtractionRun.Status.FAILED
+            run.error = outcome.error
+            run.finished_at = timezone.now()
+            run.save(update_fields=["status", "error", "finished_at"])
             return _fail(
                 document,
                 store=selected_store,
                 code="model_unavailable",
-                message=str(exc),
+                message=outcome.error,
             )
-        except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+        if outcome.error_code:
+            run.status = ExtractionRun.Status.FAILED
+            run.error = outcome.error
+            run.finished_at = timezone.now()
+            run.save(update_fields=["status", "error", "finished_at"])
             return _fail(
                 document,
                 store=selected_store,
                 code="invalid_extraction",
-                message=f"Model output failed validation: {exc}",
+                message=outcome.error,
                 state=Document.ProcessingState.PENDING_REVIEW.value,
             )
-
-        page_texts = _page_texts(document)
-        unverified_names = _validate_evidence(payload, page_texts)
-        unverified_attrs = {LITERAL_FIELDS[name] for name in unverified_names}
-
-        name_aliases = tuple(alias_map.get("student_name", ()))
-        score_aliases = tuple(alias_map.get("score", ()))
-        issue_aliases = tuple(alias_map.get("issue_date", ()))
-
-        if not (payload.student_name.value or "").strip():
-            fallback = _fallback_student_name(page_texts, name_aliases)
-            if fallback is not None:
-                payload.student_name = fallback
-                unverified_attrs.add("student_name")
-
-        if not (payload.score.value or "").strip():
-            fallback = _fallback_score(page_texts, score_aliases)
-            if fallback is not None:
-                payload.score = fallback
-                unverified_attrs.add("score_literal")
-
-        if not _has_issue_date(payload):
-            fallback = _fallback_issue_date(page_texts, issue_aliases)
-            if fallback is not None:
-                payload.dates.append(fallback)
-                unverified_attrs.add("issue_date")
-
-        missing = []
-        if not (payload.score.value or "").strip():
-            missing.append("score")
-        if not _has_issue_date(payload):
-            missing.append("issue date")
-        if missing:
-            try:
-                focused = _call_model(
-                    selected_llm,
-                    text,
-                    page_texts,
-                    messages=build_focus_messages(text, missing, alias_map),
-                )
-                _merge_focus(payload, focused)
-                unverified_attrs |= {
-                    LITERAL_FIELDS[name] for name in _validate_evidence(payload, page_texts)
-                }
-            except Exception as exc:
-                logger.info(
-                    "extraction_second_pass_failed",
-                    extra={"outcome": "skipped", "error": str(exc)[:200]},
-                )
-
-        payload.dates.extend(_harvest_dates(document, payload))
+        payload = outcome.payload
+        unverified_attrs = outcome.unverified_fields
 
         with transaction.atomic():
-            certificate = _persist_certificate(document, payload, unverified_attrs)
+            certificate = _persist_certificate(
+                document,
+                payload,
+                unverified_attrs,
+                pre_detection=pre_detection,
+                extraction_run=run,
+            )
+            run.certificate = certificate
+            run.status = ExtractionRun.Status.COMPLETED
+            run.model = str(settings.APP.get("ollama_model", ""))
+            run.prompt_version = PROMPT_VERSION
+            run.profile = profile
+            run.profile_version = profile.version if profile is not None else None
+            run.pre_detection = pre_detection
+            run.pass_count = outcome.pass_count
+            run.fallback_used = outcome.fallback_used
+            run.fallback_model = outcome.fallback_model
+            if outcome.fallback_error:
+                run.error = f"fallback_model: {outcome.fallback_error}"
+            run.latency_ms = outcome.latency_ms
+            run.finished_at = timezone.now()
+            run.save(
+                update_fields=[
+                    "certificate",
+                    "status",
+                    "model",
+                    "prompt_version",
+                    "profile",
+                    "profile_version",
+                    "pre_detection",
+                    "pass_count",
+                    "fallback_used",
+                    "fallback_model",
+                    "error",
+                    "latency_ms",
+                    "finished_at",
+                ]
+            )
             apply_verification_artifacts(certificate, page_texts)
             reasons: list[str] = []
             if not payload.is_language_certificate:

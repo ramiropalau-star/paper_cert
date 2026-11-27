@@ -21,7 +21,12 @@ from core.permissions import (
 )
 from documents.forms import CertificateEditForm
 from documents.models import Certificate, Document, ReviewEvent
-from documents.review_display import confidence_display, review_reason_items
+from documents.review_display import (
+    confidence_display,
+    review_reason_items,
+    veracity_breakdown_items,
+    veracity_display,
+)
 from documents.services.catalog_resolution import unresolved_catalog_fields
 from documents.services.classification import classify_certificate
 from documents.services.extraction import extract_certificate
@@ -62,6 +67,20 @@ def _paperless_url(document: Document) -> str:
     if not base:
         return ""
     return f"{base}/documents/{document.paperless_document_id}/"
+
+
+TEACH_ALIAS_FIELDS = (
+    "student_name",
+    "language",
+    "entity",
+    "issuing_body",
+    "test_center",
+    "exam",
+    "level",
+    "score",
+    "issue_date",
+    "certificate_code",
+)
 
 
 @login_required
@@ -126,6 +145,16 @@ def review_detail(request, pk: int):
                 for field in (certificate.unverified_fields if certificate else [])
             ],
             "reextract_diff": request.session.pop(f"reextract_diff_{document.pk}", None),
+            "review_ui_enabled": bool(settings.APP.get("review_ui_enabled", True)),
+            "veracity": veracity_display(certificate.veracity_score if certificate else None),
+            "veracity_items": veracity_breakdown_items(
+                certificate.veracity_components if certificate else None
+            ),
+            "veracity_weights_version": (
+                certificate.veracity_weights_version if certificate else ""
+            ),
+            "teach_alias_fields": TEACH_ALIAS_FIELDS if can_review else (),
+            "duplicate_of": certificate.duplicate_of if certificate else None,
         },
     )
 
@@ -171,6 +200,8 @@ def review_edit(request, pk: int):
     outcome = apply_manual_edit(certificate, form.to_certificate_values(), request.user)
     if outcome.ok:
         messages.success(request, "Cambios guardados.")
+        for note in outcome.notes:
+            messages.info(request, note)
     else:
         messages.error(request, outcome.error)
     return redirect("documents:detail", pk=document.pk)

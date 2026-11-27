@@ -54,7 +54,6 @@ REQUIRED_FOR_APPROVAL = (
     ("language_id", "idioma"),
     ("entity_id", "entidad certificadora"),
     ("level_or_score", "nivel o puntuación"),
-    ("issue_date", "fecha de expedición"),
 )
 
 
@@ -63,6 +62,7 @@ class ReviewOutcome:
     ok: bool
     error: str = ""
     missing: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
 
 
 def _serialize(value: Any) -> Any:
@@ -119,8 +119,34 @@ def apply_manual_edit(
             before={field: changes[field]["before"] for field in changes},
             after={field: changes[field]["after"] for field in changes},
         )
+    try:
+        from documents.services.duplicates import refresh_duplicate_flag
+
+        refresh_duplicate_flag(certificate)
+    except Exception as exc:  # noqa: BLE001 - duplicate check never blocks edits
+        logger.info(
+            "duplicate_check_failed",
+            extra={"outcome": "skipped", "error": str(exc)[:200]},
+        )
     sync_classification_tags(certificate.document)
-    return ReviewOutcome(ok=True)
+    try:
+        from documents.services.veracity import maybe_compute_veracity
+
+        maybe_compute_veracity(certificate)
+    except Exception:  # noqa: BLE001 - scoring must never block edits
+        pass
+    notes: tuple[str, ...] = ()
+    try:
+        from documents.services.field_aliases import propose_correction_aliases
+
+        new_values = {field: cleaned.get(field) for field in changes if field in cleaned}
+        notes = tuple(propose_correction_aliases(certificate, new_values, actor))
+    except Exception as exc:  # noqa: BLE001 - proposals never block edits
+        logger.info(
+            "alias_proposal_failed",
+            extra={"outcome": "skipped", "error": str(exc)[:200]},
+        )
+    return ReviewOutcome(ok=True, notes=notes)
 
 
 RELEASABLE_FIELDS = {FOREIGN_KEY_FIELDS.get(field, field) for field in EDITABLE_FIELDS}
@@ -178,7 +204,6 @@ def missing_required_fields(certificate: Certificate) -> list[str]:
         "level_or_score": bool(
             certificate.level_literal.strip() or certificate.score_literal.strip()
         ),
-        "issue_date": certificate.issue_date is not None,
     }
     for field, _label in REQUIRED_FOR_APPROVAL:
         if not checks[field]:

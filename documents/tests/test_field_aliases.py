@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 from django.contrib.auth.models import Group, User
@@ -190,3 +191,30 @@ def test_field_alias_list_requires_reviewer(client):
     reviewer = make_user("r2", ("reviewer",))
     client.force_login(reviewer)
     assert client.get(url).status_code == 200
+
+
+def test_teach_alias_uses_dedicated_form_outside_cert_form(client):
+    """Teach-alias controls sit inside #cert-form's table but must belong to
+    their own <form> via the form= attribute: a nested <form> is dropped by
+    browsers, and an unassociated required input blocks the certificate save."""
+    reviewer = make_user("rev-form", ("reviewer",))
+    document = make_document(processing_state=Document.ProcessingState.PENDING_REVIEW)
+    Certificate.objects.create(
+        document=document,
+        student_name="Ada Lovelace",
+        language_literal="",
+    )
+    client.force_login(reviewer)
+
+    response = client.get(reverse("documents:detail", args=[document.pk]))
+
+    content = response.content.decode()
+    teach_form_id = f"teach-{document.pk}-language"
+    teach_url = reverse("documents:teach_alias", args=[document.pk])
+    assert f'<form id="{teach_form_id}" method="post" action="{teach_url}"' in content
+    assert f'form="{teach_form_id}"' in content
+    cert_form = content.split('id="cert-form"', 1)[1].split("</form>", 1)[0]
+    assert "<form" not in cert_form
+    alias_inputs = re.findall(r"<input[^>]*name=\"alias\"[^>]*>", cert_form)
+    assert alias_inputs
+    assert all('form="teach-' in tag for tag in alias_inputs)

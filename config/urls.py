@@ -6,7 +6,15 @@ from django.contrib.auth.decorators import login_required
 from django.urls import include, path
 
 from core.internal import internal_health
-from core.views import health, home, ready
+from core.views import (
+    admin_learning,
+    admin_panel,
+    admin_settings,
+    admin_users,
+    health,
+    home,
+    ready,
+)
 from documents.views import (
     internal_acquire_text,
     internal_classify,
@@ -85,5 +93,9 @@ urlpatterns = [
     path("users/", include("accounts.urls")),
     path("catalog/", include("catalog.urls")),
     path("admin/", admin.site.urls),
+    path("admin-panel/", admin_panel, name="admin-panel"),
+    path("admin-panel/aprendizaje/", admin_learning, name="admin-learning"),
+    path("admin-panel/usuarios/", admin_users, name="admin-users"),
+    path("admin-panel/configuracion/", admin_settings, name="admin-settings"),
     path("", home, name="home"),
 ]

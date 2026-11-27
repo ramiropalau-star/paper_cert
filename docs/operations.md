@@ -453,3 +453,42 @@ its UI only via SSH tunnel or a separate authenticated proxy path.
   `backups/` off-host.
 - Run `./scripts/health.sh` from monitoring or cron; it exits non-zero when
   any service is unhealthy.
+
+### Extraction evaluation
+
+The offline evaluation harness measures extraction quality against a
+versioned golden set without touching live certificates. Build a golden set
+from approved/validated certificates (rejected documents are never
+included), then run dry-run evaluations:
+
+```bash
+docker compose exec app python manage.py evaluate_extraction build-set
+docker compose exec app python manage.py evaluate_extraction run
+docker compose exec app python manage.py evaluate_extraction run --entity 3 --baseline 7
+docker compose exec app python manage.py evaluate_extraction list
+docker compose exec app python manage.py evaluate_extraction show 12
+docker compose exec app python manage.py evaluate_extraction compare 7 12
+```
+
+Each run records the model, prompt version, profile version, pre-detection
+version, code revision, per-field exact/normalized accuracy, missing- and
+fabricated-value rates, evidence-quote validity, and latency — overall and
+grouped by issuer and certificate type. `--baseline <run_id>` (or the most
+recent completed run) produces a regression/improvement report per field;
+comparison never deploys or activates anything. Dry runs persist nothing on
+certificates, review reasons, or document state.
+
+Golden-set versions are immutable: `build-set` always creates the next
+version, so earlier runs remain reproducible. `APP_EVAL_REGRESSION_TOLERANCE`
+(default `0.02`) controls the accuracy delta that counts as a regression.
+
+### Issuer-profile learning rollout and rollback
+
+The issuer-profile learning features ship behind independent flags:
+`APP_PRE_DETECTION_ENABLED` (+ `APP_PRE_DETECTION_CLASSIFIER_ENABLED`),
+`APP_PROFILE_GUIDED_EXTRACTION_ENABLED`, `APP_VERACITY_ENABLED`, and
+`APP_REVIEW_UI_ENABLED`. Set any of them to `false` in `.env` and restart
+the app to roll that feature back; schema changes are additive and no data
+is deleted, so re-enabling restores full behavior. `APP_REVIEW_UI_ENABLED`
+only hides the new review UI (veracity badge/breakdown, inline thumbnail,
+zoom, side-by-side document); extraction and scoring continue unchanged.

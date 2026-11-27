@@ -785,6 +785,42 @@ class Command(BaseCommand):
                 defaults={"reference": reference, "is_active": False},
             )
 
+        # Verifier configurations migrated from the code registry: same
+        # hosts, URL templates, success criteria, and source parser, now as
+        # editable per-issuer data.
+        from documents.models import VerifierConfig
+        from documents.services.verifiers import SUCCESS_MARKERS, UV_VERIFY_URL
+
+        verifier_specs = [
+            {
+                "host": "uv.es",
+                "url_template": UV_VERIFY_URL,
+                "success_criteria": {"require_pdf": True},
+                "source_document_parser": VerifierConfig.Parser.PDF_TEXT,
+                "source_field_patterns": {
+                    "student_name": (
+                        r"(?:Nom i cognoms?|Nombre|Name|Aluno)\s*[:\-]?\s*([^\n]{3,80})"
+                    ),
+                    "certificate_code": (
+                        r"(?:Codi|Código|Code|Cod\.?)\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9\-]{4,})"
+                    ),
+                },
+            },
+            {
+                "host": "tramita.gva.es",
+                "url_template": "{url}",
+                "success_criteria": {"markers": list(SUCCESS_MARKERS)},
+                "source_document_parser": VerifierConfig.Parser.NONE,
+                "source_field_patterns": {},
+            },
+        ]
+        for spec in verifier_specs:
+            VerifierConfig.objects.update_or_create(
+                host=spec["host"],
+                entity=None,
+                defaults={key: spec[key] for key in spec if key != "host"},
+            )
+
         equivalence_count = 0
         for entity_name, exam_name, score_min, score_max, level in EQUIVALENCES:
             exam = exam_by_key.get((entity_name, exam_name))

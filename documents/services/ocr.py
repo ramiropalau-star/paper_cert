@@ -29,6 +29,7 @@ class OcrPage:
     text: str
     method: str
     confidence: float
+    layout: dict | None = None
 
 
 @dataclass(frozen=True)

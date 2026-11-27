@@ -105,3 +105,23 @@ blocking the review queue.
 `tests/test_internal_api.py` cover login/logout redirects, the role matrix,
 admin access restrictions, CSRF rejection, secure cookie flags, oversized
 requests, and internal token acceptance/denial.
+
+## Source verification and verifier configuration
+
+Automated source checks are allowlisted by hostname: only hosts matching an
+active `VerifierConfig` (or the built-in UV/GVA registry entries kept as a
+fallback) are ever fetched. Unknown domains are never requested, which
+bounds SSRF exposure to issuer-configured hosts. Requests use a fixed
+User-Agent, `follow_redirects=True`, a configurable per-config timeout
+(clamped to 1–120 s in the admin view), and a 512 KB response cap.
+
+`VerifierConfig` rows (host, URL template with `{code}`/`{document_id}`/
+`{url}` placeholders, success criteria, optional source-document parser and
+field patterns) are editable data, not code. `host` must be a valid domain,
+`url_template` must be an http(s) URL, `code_pattern` must compile as a
+regex, and JSON fields must be objects — invalid values are rejected by
+`full_clean()` in the reviewer-facing admin (`/verifier-configs/`,
+reviewer+ only; viewers get HTTP 403). Successful verification marks the
+certificate `verified_at_source`; a verifier-returned source document is
+compared field-by-field and material mismatches add the `source_mismatch`
+review reason — comparison never approves or verifies by itself.

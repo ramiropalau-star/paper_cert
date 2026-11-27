@@ -8,7 +8,12 @@ from documents.views.browse import (
     document_status,
     document_thumbnail,
 )
-from documents.views.catalog_admin import field_alias_list, format_profile_list
+from documents.views.catalog_admin import (
+    field_alias_list,
+    format_profile_list,
+    format_profile_preview,
+    verifier_config_list,
+)
 from documents.views.internal import (
     internal_acquire_text,
     internal_classify,
@@ -44,6 +49,7 @@ __all__ = [
     "document_thumbnail",
     "field_alias_list",
     "format_profile_list",
+    "format_profile_preview",
     "internal_acquire_text",
     "internal_classify",
     "internal_extract",
@@ -58,6 +64,7 @@ __all__ = [
     "review_reprocess",
     "review_teach_alias",
     "review_validate",
+    "verifier_config_list",
     "review_verify_now",
     "review_verify_source",
     "upload",

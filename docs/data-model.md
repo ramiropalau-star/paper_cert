@@ -93,10 +93,24 @@ Learned format signature for one certifying entity, keyed by a cohort:
 - `entity`: owning entity (`PROTECT`).
 - `exam`: optional exam (`PROTECT`); set only when enough samples exist for
   the exam-scoped cohort.
-- `issue_year`: calendar year of emission the profile describes.
+- `issue_year`: calendar year of emission the profile describes; `NULL`
+  marks the entity-level pool profile learned across all years.
 - `sample_count`: number of approved certificates that fed the profile.
-- `anchors`: JSON map of corroborated normalized text lines to their
-  frequency within the cohort.
+- `anchors`: JSON list of corroborated anchors with their document
+  frequency within the cohort — normalized text lines, plus layout anchors
+  (`kind: "layout"`, `feature` token) for recurring positioned text and
+  image regions.
+- `value_shapes`: JSON map of learned per-field value patterns (date order,
+  score/code shape, level vocabulary) keyed by extraction field.
+- `quality`: JSON map of measured precision, recall, and anchor churn on
+  approved samples.
+- `drift_detected`, `drift_detail`: drift signal when recent approved samples
+  diverge from the anchors the profile was built from.
+- `version`: monotonic version bumped on every rebuild; `version_history`
+  keeps a bounded snapshot of previous versions for audit.
+- `provenance`: JSON describing how the profile was built (source samples,
+  weighting rules).
+- `last_rebuilt_at`: timestamp of the last rebuild.
 - `created_at`, `updated_at`.
 
 Profiles are rebuilt from approved certificates (anchors must appear in at
@@ -134,9 +148,14 @@ error is reachable from any processing step
 
 - `document`: parent document.
 - `page_number`: unique per document.
-- `text`: page text.
+- `text`: page text (embedded text is conservatively normalized — NFKC,
+  whitespace collapse — before storage).
 - `method`: `embedded` or `ocr`.
 - `ocr_confidence`: optional mean confidence.
+- `layout`: optional JSON with per-page layout captured from embedded PDFs —
+  text lines with bounding boxes and image regions — used by format-profile
+  learning. `NULL` for OCR/scanned pages and documents ingested before
+  layout capture.
 
 ### `Certificate`
 
@@ -166,6 +185,16 @@ One certificate row per document, enforced by a `OneToOneField`.
 - `manual_fields`: JSON list of field names a human edited during review;
   those fields are frozen against automatic re-extraction until released.
 - `prompt_version`.
+- `pre_detection`: JSON record of the deterministic issuer/type
+  pre-detection pass (result, confidence, margin, candidates, classifier
+  fallback use).
+- `extraction_run`: FK to the `ExtractionRun` that produced the current
+  extraction.
+- `veracity_score`, `veracity_components`, `veracity_weights_version`,
+  `veracity_computed_at`: numeric review-aid score with its component
+  breakdown and the weights version used.
+- `source_comparison`: JSON field-level comparison against a
+  verifier-returned source document.
 - `created_at`, `updated_at`.
 
 ### `ReviewEvent`
@@ -181,6 +210,62 @@ One certificate row per document, enforced by a `OneToOneField`.
 
 `edit` events also serve as the audit trail for manual-field freezes;
 `learn` events are emitted by `learn_from_history` backfills.
+
+### `FieldLabelAlias`
+
+- `field`: extraction field the alias maps to (`student_name`, `score`, ...).
+- `alias`, `normalized_alias`: printed label and its normalized form.
+- `scope_entity`: optional catalog entity scope; null means global.
+- `scope_key`: `"global"` or the entity id, computed on save.
+- `source`: `manual` or `learned`.
+- `lifecycle`: `candidate`, `active`, or `rejected`. Only `active` aliases
+  feed extraction; learned aliases start as candidates and activate on
+  corroboration or reviewer confirmation.
+- `support_count`, `confidence`, `provenance`: learning bookkeeping.
+- `is_active`: reviewer on/off switch; an alias must be both `active` in
+  lifecycle and `is_active` to be used.
+- `created_by`, `created_at`, `updated_at`.
+
+### `ExtractionRun`
+
+One row per extraction pass over a document:
+
+- `document`, `certificate`: what was extracted.
+- `status`: `running`, `completed`, `failed`.
+- `model`, `prompt_version`, `profile`, `profile_version`: configuration
+  that produced the result.
+- `pre_detection`: JSON snapshot of the pre-detection result.
+- `pass_count`, `fallback_used`, `fallback_model`: bounded retry/escalation
+  bookkeeping.
+- `latency_ms`, `error`, `started_at`, `finished_at`, `created_at`.
+
+### `VerifierConfig`
+
+Per-issuer verifier configuration stored as data:
+
+- `entity`: optional catalog entity the config belongs to.
+- `host`: allowed verifier hostname (validated).
+- `code_pattern`: optional regex used to recognize verification codes.
+- `url_template`: optional URL template with `{code}`/`{document_id}`
+  placeholders; must be an http(s) URL on `host`.
+- `success_criteria`: JSON success markers/content checks.
+- `source_document_parser`, `source_field_patterns`: how to parse and
+  compare a verifier-returned source document.
+- `timeout_seconds`, `is_active`, `created_by`, `created_at`, `updated_at`.
+
+### `EvaluationRun` / `EvaluationCase`
+
+Offline extraction evaluation storage:
+
+- `EvaluationRun`: `status` (`queued`, `running`, `completed`, `failed`),
+  `set_name`/`set_version` of the golden set used, `config` snapshot,
+  `metrics`, `comparison` vs a baseline run, `baseline_run` FK, `actor`,
+  `code_revision`, `started_at`/`finished_at`/`created_at`.
+- `EvaluationCase`: one golden-set case per human-confirmed certificate —
+  `set_name`/`set_version`, `certificate` FK, `entity`/`exam` FKs,
+  `profile_version`, `source_text`, `expected` fields, `evidence`, and
+  `context` (model/prompt context used). New golden-set versions create new
+  rows; old versions are never mutated.
 
 ### `PaperlessSyncState`
 

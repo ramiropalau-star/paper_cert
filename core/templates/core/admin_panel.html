@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Administración{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Administración</h1>
+  <div class="admin-cards">
+    <a class="admin-card" href="{% url 'admin-learning' %}">
+      <h2>Aprendizaje del emisor</h2>
+      <p>Perfiles de formato, aliases de campos y verificadores por emisor: revisar y corregir lo que el sistema aprendió de los certificados aprobados.</p>
+    </a>
+    <a class="admin-card" href="{% url 'admin-users' %}">
+      <h2>Usuarios y acceso</h2>
+      <p>Crear y editar usuarios, roles (viewer/reviewer/admin) y contraseñas.</p>
+    </a>
+    {% if is_admin %}
+    <a class="admin-card" href="{% url 'admin-settings' %}">
+      <h2>Configuración del programa</h2>
+      <p>Parámetros de extracción, OCR, integraciones y umbrales. Los editables se aplican al guardar, sin reiniciar.</p>
+    </a>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

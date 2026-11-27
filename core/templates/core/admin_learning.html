@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Administración — Aprendizaje del emisor{% endblock %}
+{% block content %}
+<section class="panel">
+  <p><a href="{% url 'admin-panel' %}">← Administración</a></p>
+  <h1>Aprendizaje del emisor</h1>
+  <p class="muted">Herramientas para revisar y corregir lo que el sistema aprendió de los certificados aprobados.</p>
+  <ul class="admin-links">
+    <li><a href="{% url 'documents:format_profiles' %}">Perfiles de formato</a> — anchors y cohortes por entidad/examen/año; desactivar o re-puntuar.</li>
+    <li><a href="{% url 'documents:field_aliases' %}">Aliases de campos</a> — etiquetas impresas aprendidas; activar, desactivar o rechazar.</li>
+    <li><a href="{% url 'documents:verifier_configs' %}">Verificadores por emisor</a> — reglas de verificación en origen (host, URL, patrones).</li>
+  </ul>
+  <p class="muted">Limpieza de falsos positivos: rechazar el certificado en su detalle de revisión, luego reconstruir perfiles con <code>python manage.py rebuild_format_profiles</code> y crear un nuevo golden set con <code>python manage.py evaluate_extraction build-set</code>.</p>
+</section>
+{% endblock %}

@@ -26,6 +26,7 @@ from documents.services.paperless import (
 )
 from documents.services.review_reasons import merge_review_reasons
 from documents.services.state import transition_document
+from documents.services.text_clean import clean_embedded_text
 from documents.services.validation import EXTENSION_BY_TYPE as _EXTENSION_BY_TYPE
 
 _SNIFFED_TYPES = set(_EXTENSION_BY_TYPE) | {"image/x-ms-bmp"}
@@ -74,6 +75,70 @@ def _pdf_texts(data: bytes) -> tuple[list[str], int]:
     return texts, len(reader.pages)
 
 
+def _pdf_layout(page) -> dict | None:
+    """Best-effort layout snapshot of one fitz page: text lines with bboxes
+    and image regions. Returns None when nothing usable is found."""
+    rect = page.rect
+    if rect.width <= 0 or rect.height <= 0:
+        return None
+    lines = []
+    for block in page.get_text("dict").get("blocks", []):
+        for line in block.get("lines", []):
+            text = "".join(span.get("text", "") for span in line.get("spans", [])).strip()
+            if not text:
+                continue
+            lines.append({"text": text, "bbox": [round(v, 1) for v in line["bbox"]]})
+    images = []
+    for info in page.get_image_info():
+        bbox = info.get("bbox")
+        if not bbox:
+            continue
+        images.append(
+            {
+                "bbox": [round(v, 1) for v in bbox],
+                "width": info.get("width"),
+                "height": info.get("height"),
+            }
+        )
+    if not lines and not images:
+        return None
+    return {
+        "page": {"w": round(rect.width, 1), "h": round(rect.height, 1)},
+        "lines": lines,
+        "images": images,
+    }
+
+
+def _pdf_layouts(data: bytes) -> list[dict | None]:
+    """Per-page layout for a PDF, aligned with page order.
+
+    Best-effort: any failure yields an empty list so ingestion never blocks
+    on layout capture. OCR/scanned pages simply carry no layout.
+
+    Note: documents ingested before layout capture keep ``layout=NULL``;
+    layout is only populated on (re)acquisition, e.g. via the reprocess
+    flow — there is no separate backfill command.
+    """
+    try:
+        import fitz
+    except ImportError:
+        return []
+    try:
+        doc = fitz.open(stream=data, filetype="pdf")
+    except Exception:
+        return []
+    layouts: list[dict | None] = []
+    try:
+        for page in doc:
+            try:
+                layouts.append(_pdf_layout(page))
+            except Exception:
+                layouts.append(None)
+    finally:
+        doc.close()
+    return layouts
+
+
 def _method_for(pages: list[OcrPage]) -> str:
     methods = {page.method for page in pages}
     if methods == {"embedded"}:
@@ -108,6 +173,7 @@ def _save(
                         "ocr_confidence": page.confidence
                         if page.method == DocumentPage.Method.OCR
                         else None,
+                        "layout": page.layout,
                     },
                 )
             DocumentPage.objects.filter(document=document, page_number__gt=len(pages)).delete()
@@ -162,13 +228,14 @@ def _should_skip(document: Document) -> bool:
     return False
 
 
-def _embedded_pages(texts: list[str]) -> list[OcrPage]:
+def _embedded_pages(texts: list[str], layouts: list[dict | None] | None = None) -> list[OcrPage]:
     return [
         OcrPage(
             page_number=index + 1,
-            text=text,
+            text=clean_embedded_text(text),
             method=DocumentPage.Method.EMBEDDED.value,
             confidence=1.0,
+            layout=(layouts[index] if layouts and index < len(layouts) else None),
         )
         for index, text in enumerate(texts)
     ]
@@ -289,9 +356,10 @@ def acquire_text(
                     code="unreadable",
                     message="The PDF has no pages",
                 )
+            layouts = _pdf_layouts(data)
 
             if all(usable_char_count(text) >= embedded_threshold for text in texts):
-                pages = _embedded_pages(texts)
+                pages = _embedded_pages(texts, layouts)
                 return _finish_pages(
                     document,
                     store=selected_store,
@@ -309,7 +377,7 @@ def acquire_text(
                     effective_type,
                 )
             except OcrError as exc:
-                pages = _embedded_pages(texts)
+                pages = _embedded_pages(texts, layouts)
                 no_text = exc.code == "no_text"
                 return _fail(
                     document,
@@ -331,7 +399,7 @@ def acquire_text(
                     store=selected_store,
                     code="incomplete_ocr",
                     message="OCR did not return every page in order",
-                    pages=_embedded_pages(texts),
+                    pages=_embedded_pages(texts, layouts),
                     text_method=Document.TextMethod.EMBEDDED.value,
                 )
             return _finish_pages(

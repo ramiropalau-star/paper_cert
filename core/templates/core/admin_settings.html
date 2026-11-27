@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Administración — Configuración del programa{% endblock %}
+{% block content %}
+<section class="panel">
+  <p><a href="{% url 'admin-panel' %}">← Administración</a></p>
+  <h1>Configuración del programa</h1>
+  <p class="muted">
+    Los campos editables se guardan en la base de datos y se aplican en caliente
+    (sin reiniciar el contenedor). Los marcados como <em>solo lectura</em> están
+    vinculados al arranque o son secretos: se cambian en <code>.env</code> y
+    requieren reiniciar <code>app</code>. Los secretos nunca se muestran.
+  </p>
+  <form method="post" id="settings-form">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="save">
+    {% for section in settings_sections %}
+      <h2>{{ section.title }}</h2>
+      <table class="settings-table">
+        <tbody>
+          {% for row in section.rows %}
+            <tr>
+              <th>{{ row.key }}{% if row.overridden %} <span class="badge">override</span>{% endif %}</th>
+              <td>
+                {% if row.editable %}
+                  <input type="text" name="{{ row.key }}" value="{{ row.value }}" class="setting-input">
+                  {% if row.overridden %}
+                    <button type="submit" form="reset-{{ row.key }}" class="link-button">restablecer</button>
+                  {% endif %}
+                {% else %}
+                  <code>{{ row.value }}</code>
+                  <span class="muted">(solo lectura)</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endfor %}
+    <p>
+      <button type="submit" class="button">Guardar cambios</button>
+    </p>
+  </form>
+  {% for section in settings_sections %}
+    {% for row in section.rows %}
+      {% if row.editable and row.overridden %}
+        <form method="post" id="reset-{{ row.key }}" class="inline-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="reset">
+          <input type="hidden" name="key" value="{{ row.key }}">
+        </form>
+      {% endif %}
+    {% endfor %}
+  {% endfor %}
+  <form method="post" onsubmit="return confirm('¿Restablecer TODOS los parámetros a los valores del entorno?');">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="reset_all">
+    <button type="submit" class="link-button">Restablecer todos los overrides</button>
+  </form>
+</section>
+{% endblock %}

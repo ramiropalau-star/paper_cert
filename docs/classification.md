@@ -112,6 +112,21 @@ Classification writes these codes to `certificate.review_reasons`:
 | `non_certificate` | document is not a language certificate |
 | `equivalence_not_found` | exam resolved but no UV L2 equivalence rule applies |
 | `format_mismatch` | document text does not match the issuer's known format profile |
+| `entity_mismatch` | resolved entity/exam disagrees with issuer pre-detection |
+| `source_mismatch` | source-document field comparison disagrees with extraction |
+
+After resolving catalog references, classification runs a consistency
+check (`documents/services/consistency.py`) comparing the resolved
+entity/exam with the stored pre-detection result; a material mismatch adds
+`entity_mismatch` and may trigger one bounded re-extraction with the
+resolved issuer's profile (see `docs/extraction.md`). Source verification
+(`verify_at_source`) can add `source_mismatch` when the issuer's returned
+document disagrees with extracted fields.
+
+Classification also computes the veracity score
+(`documents/services/veracity.py`, flag `APP_VERACITY_ENABLED`) on every
+classified certificate; it is a review aid only and never changes the
+review state. See `docs/review.md` for the displayed breakdown.
 
 Pipeline-stage failures (`ocr_failed`, `insufficient_text`,
 `low_ocr_confidence`, `original_unavailable`, `model_unavailable`,
@@ -149,3 +164,49 @@ route to review for manual assignment. After CEFR resolution,
   review queue.
 - Reviewers can override the value manually; edits are audited like any
   other field and appear in the report column "Equivalencia UV L2".
+
+## Format profile quality, drift, and versioning
+
+Format profiles are rebuilt from approved/validated certificates by
+`learn_format_profile` (on review approval) or manually with
+`manage.py rebuild_format_profiles [--entity ID]`.
+
+Each profile cohort `(entity, exam, year)` tracks:
+
+- **Anchors** — corroborated boilerplate lines (`df` = distinct samples;
+  `wdf` = verified-sample-weighted count used for ranking only). Layout
+  anchors (`kind: "layout"`) capture recurring structural features —
+  position-bucketed text lines and image regions such as logos — learned
+  from per-page layout captured at ingestion. Lines that look like
+  extracted metadata (lowercase `key: value` noise) are never anchor
+  candidates.
+- **Entity pool** — every approval also refreshes a `year=NULL` pool
+  profile spanning all of the entity's approved samples, so anchors can
+  emerge even when no single year reaches the sample threshold. Pool
+  anchors must additionally appear in at least two distinct issuance
+  years (unless the whole pool is single-year), keeping year-specific
+  boilerplate out. Scoring prefers the most specific cohort: exam+year →
+  entity+year → exam pool → entity pool → union of year cohorts.
+- **Value shapes** — learned date order per date role, score/code shape,
+  and level vocabulary (`value_shapes`).
+- **Quality** — `anchor_precision`, `anchor_recall`, `anchor_churn`, and
+  `sample_count`, measured on the cohort itself.
+- **Drift** — `drift_detected`/`drift_detail` fire when the previous
+  version's anchors are barely present in the most recent approved
+  samples (below `APP_PROFILE_DRIFT_THRESHOLD`).
+- **Versioning** — `version` bumps whenever anchors or value shapes
+  change (and on every explicit rebuild); the prior state is preserved in
+  `version_history` (bounded) and `provenance` records the learning
+  source, sample years, and verified-sample count.
+
+Source-verified certificates (`verified_at_source`, `manually_confirmed`)
+weight anchors and value shapes by `APP_FORMAT_VERIFIED_WEIGHT` (default
+2.0) without relaxing the distinct-sample corroboration threshold — one
+verified sample alone still cannot create an anchor.
+
+A profile whose measured `anchor_precision` falls below
+`APP_PROFILE_QUALITY_FLOOR` (default 0.5), or that is flagged as drifting,
+contributes reduced *positive* evidence to `format_score` via
+`profile_quality_weight` (down to a 0.2 floor; drifting caps at 0.5). It
+never contributes negative evidence: missing anchors are never treated as
+a penalty, and the anchors are not required during extraction.

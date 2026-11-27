@@ -59,6 +59,7 @@ def read_app_settings(environ: Mapping[str, str] | None = None) -> dict[str, obj
         "format_min_exam_samples": env_int(source, "APP_FORMAT_MIN_EXAM_SAMPLES", 3),
         "format_score_threshold": env_float(source, "APP_FORMAT_SCORE_THRESHOLD", 0.4),
         "format_max_score": env_float(source, "APP_FORMAT_MAX_SCORE", 0.5),
+        "format_verified_weight": env_float(source, "APP_FORMAT_VERIFIED_WEIGHT", 2.0),
         "paperless_url": source.get("APP_PAPERLESS_URL", "http://paperless:8000"),
         "paperless_ui_url": source.get("APP_PAPERLESS_UI_URL", ""),
         "paperless_token": source.get("APP_PAPERLESS_TOKEN", ""),
@@ -88,6 +89,27 @@ def read_app_settings(environ: Mapping[str, str] | None = None) -> dict[str, obj
             source, "APP_PAPERLESS_RETRY_BACKOFF_SECONDS", 0.5
         ),
         "n8n_webhook_timeout_seconds": env_float(source, "APP_N8N_WEBHOOK_TIMEOUT_SECONDS", 10.0),
+        # Issuer-profile learning: pre-detection, profile-guided extraction,
+        # veracity scoring, and review-UI changes are independently flaggable.
+        "pre_detection_enabled": env_bool(source, "APP_PRE_DETECTION_ENABLED", True),
+        "pre_detection_confidence": env_float(source, "APP_PRE_DETECTION_CONFIDENCE", 0.6),
+        "pre_detection_margin": env_float(source, "APP_PRE_DETECTION_MARGIN", 0.15),
+        "pre_detection_classifier_enabled": env_bool(
+            source, "APP_PRE_DETECTION_CLASSIFIER_ENABLED", False
+        ),
+        "profile_guided_extraction_enabled": env_bool(
+            source, "APP_PROFILE_GUIDED_EXTRACTION_ENABLED", True
+        ),
+        "profile_context_max_chars": env_int(source, "APP_PROFILE_CONTEXT_MAX_CHARS", 4000),
+        "extraction_fallback_model": source.get("APP_EXTRACTION_FALLBACK_MODEL", ""),
+        "veracity_enabled": env_bool(source, "APP_VERACITY_ENABLED", True),
+        "review_ui_enabled": env_bool(source, "APP_REVIEW_UI_ENABLED", True),
+        "alias_corroboration_min": env_int(source, "APP_ALIAS_CORROBORATION_MIN", 2),
+        "profile_quality_floor": env_float(source, "APP_PROFILE_QUALITY_FLOOR", 0.5),
+        "profile_drift_threshold": env_float(source, "APP_PROFILE_DRIFT_THRESHOLD", 0.3),
+        "eval_regression_tolerance": env_float(source, "APP_EVAL_REGRESSION_TOLERANCE", 0.02),
+        "code_revision": source.get("APP_CODE_REVISION", ""),
+        "qr_decode_enabled": env_bool(source, "APP_QR_DECODE_ENABLED", False),
         "recovery_interval_seconds": env_float(source, "APP_RECOVERY_INTERVAL_SECONDS", 60.0),
         "recovery_stale_seconds": env_float(source, "APP_RECOVERY_STALE_SECONDS", 1800.0),
         "recovery_max_attempts": env_int(source, "APP_RECOVERY_MAX_ATTEMPTS", 3),
@@ -103,7 +125,59 @@ def read_app_settings(environ: Mapping[str, str] | None = None) -> dict[str, obj
     }
 
 
-APP = read_app_settings()
+class AppSettings(dict):
+    """``APP`` dict that honors runtime overrides stored in the cache.
+
+    Program settings saved through the admin panel are mirrored into the
+    shared cache under ``appcfg:v1:<key>``; reads check the cache first so
+    every worker sees the new value without a restart. The database table
+    ``core.ProgramSetting`` is the durable source of truth and is repopulated
+    into the cache on startup.
+    """
+
+    _MISSING = object()
+    _primed = False
+
+    @staticmethod
+    def _cache_key(key: str) -> str:
+        return f"appcfg:v1:{key}"
+
+    @classmethod
+    def _prime_once(cls) -> None:
+        """Load stored overrides into the shared cache, once per process."""
+        if cls._primed:
+            return
+        cls._primed = True
+        try:
+            from core.settings_admin import prime_cache
+
+            prime_cache()
+        except Exception:  # noqa: BLE001 - table may not exist yet / DB down
+            pass
+
+    def _override(self, key: str):
+        self._prime_once()
+        try:
+            from django.core.cache import cache
+
+            return cache.get(self._cache_key(key), self._MISSING)
+        except Exception:  # noqa: BLE001 - settings must never break startup/reads
+            return self._MISSING
+
+    def __getitem__(self, key):
+        override = self._override(key)
+        if override is not self._MISSING:
+            return override
+        return super().__getitem__(key)
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+
+APP = AppSettings(read_app_settings())
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-insecure-change-me")
 DEBUG = env_bool(os.environ, "DJANGO_DEBUG", False)

@@ -1,17 +1,16 @@
 {% if can_review %}
 <details class="teach-alias">
   <summary>Enseñar alias</summary>
-  <form method="post" action="{% url 'documents:teach_alias' document.pk %}" class="inline-form">
-    {% csrf_token %}
-    <input type="hidden" name="field" value="{{ alias_field }}">
-    <input type="text" name="alias" placeholder="Etiqueta tal como aparece en el certificado" required>
+  <div class="inline-form">
+    <input type="hidden" name="field" value="{{ alias_field }}" form="teach-{{ document.pk }}-{{ alias_field }}">
+    <input type="text" name="alias" placeholder="Etiqueta tal como aparece en el certificado" required form="teach-{{ document.pk }}-{{ alias_field }}">
     {% if certificate.entity_id %}
-      <select name="scope" aria-label="Alcance del alias">
+      <select name="scope" aria-label="Alcance del alias" form="teach-{{ document.pk }}-{{ alias_field }}">
         <option value="global">Global</option>
         <option value="entity">Solo {{ certificate.entity.name }}</option>
       </select>
     {% endif %}
-    <button type="submit" class="link-button">Guardar</button>
-  </form>
+    <button type="submit" class="link-button" form="teach-{{ document.pk }}-{{ alias_field }}">Guardar</button>
+  </div>
 </details>
 {% endif %}

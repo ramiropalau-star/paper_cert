@@ -104,6 +104,22 @@ REVIEW_REASON_DETAILS = {
         "Formato no reconocido",
         "El documento no coincide con el formato conocido del organismo emisor.",
     ),
+    "entity_mismatch": (
+        "Entidad detectada en discrepancia",
+        "El emisor detectado antes de la extracción difiere del resuelto por clasificación; puede haberse re-extraído con el perfil del emisor resuelto.",
+    ),
+    "source_mismatch": (
+        "Discrepancia con el documento fuente",
+        "La verificación en origen devolvió campos que no coinciden con los extraídos; revisá los datos antes de aprobar.",
+    ),
+    "possible_duplicate": (
+        "Posible duplicado",
+        "Otro certificado vivo coincide con este en identidad (código o alumno/examen/fecha); verificá antes de aprobar.",
+    ),
+    "cefr_discrepancy": (
+        "Discrepancia de nivel CEFR",
+        "El nivel CEFR impreso en el certificado difiere del nivel resuelto por las reglas del examen; verificá cuál es el correcto.",
+    ),
     "recovery_attempts_exhausted": (
         "Reintentos agotados",
         "El documento agotó los intentos automáticos de recuperación.",
@@ -111,6 +127,71 @@ REVIEW_REASON_DETAILS = {
 }
 
 BAND_LABELS = {"high": "Alta", "medium": "Media", "low": "Baja"}
+
+# Veracity bands: a review aid only, never an approval signal.
+VERACITY_BANDS = ((0.75, "high"), (0.45, "medium"), (0.0, "low"))
+
+VERACITY_COMPONENT_FALLBACK = "Componente de veracidad"
+
+
+def veracity_band(score) -> str | None:
+    """Return high/medium/low for a 0-1 veracity score, else None."""
+    if score is None:
+        return None
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        return None
+    value = max(0.0, min(1.0, value))
+    for threshold, band in VERACITY_BANDS:
+        if value >= threshold:
+            return band
+    return "low"
+
+
+def veracity_display(score):
+    """Numeric veracity with band, or None when no score was computed."""
+    band = veracity_band(score)
+    if band is None:
+        return None
+    value = max(0.0, min(1.0, float(score)))
+    return {
+        "percent": int(round(value * 100)),
+        "raw": f"{value:.2f}",
+        "band": band,
+        "band_label": BAND_LABELS[band],
+    }
+
+
+def veracity_breakdown_items(components: dict | None) -> list[dict]:
+    """Human-labeled veracity components for the review detail.
+
+    Unknown component codes degrade to a generic label; the raw code is
+    never the primary text. The weakest component is flagged.
+    """
+    raw = (components or {}).get("components") or {}
+    items = []
+    for name, data in raw.items():
+        if not isinstance(data, dict):
+            continue
+        try:
+            value = float(data.get("value"))
+        except (TypeError, ValueError):
+            value = 0.0
+        label = str(data.get("label") or "").strip() or VERACITY_COMPONENT_FALLBACK
+        items.append(
+            {
+                "name": str(name),
+                "label": label,
+                "value": round(max(0.0, min(1.0, value)), 4),
+                "percent": int(round(max(0.0, min(1.0, value)) * 100)),
+            }
+        )
+    if items:
+        weakest = min(items, key=lambda item: item["value"])
+        for item in items:
+            item["weakest"] = item is weakest
+    return items
 
 
 def review_reason_items(reasons) -> list[dict]:

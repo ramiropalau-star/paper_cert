@@ -118,6 +118,12 @@
               <p class="no-observations">Sin observaciones.</p>
             {% endif %}
           {% endif %}
+          {% if certificate.duplicate_of %}
+            <p class="warn">⚠ Posible duplicado de
+              <a href="{% url 'documents:detail' certificate.duplicate_of.document_id %}">{{ certificate.duplicate_of.document.original_filename }}</a>
+              — {{ certificate.duplicate_of.student_name|default:"sin nombre" }}.
+              Verificá antes de aprobar.</p>
+          {% endif %}
 
           <form method="post" action="{% url 'documents:edit' document.pk %}" id="cert-form">
             {% csrf_token %}
@@ -284,8 +290,38 @@
             {% endif %}
           </form>
 
+          {% if can_review %}
+            {% for teach_field in teach_alias_fields %}
+              <form id="teach-{{ document.pk }}-{{ teach_field }}" method="post" action="{% url 'documents:teach_alias' document.pk %}" class="inline-form">
+                {% csrf_token %}
+              </form>
+            {% endfor %}
+          {% endif %}
+
           {% if warnings.document %}<p class="warn">⚠ {{ warnings.document }}</p>{% endif %}
           {% if warnings.fields %}<p class="warn">⚠ <a href="#datos">{{ warnings.fields }}</a></p>{% endif %}
+
+          {% if review_ui_enabled %}
+          <h3>Veracidad</h3>
+          {% if veracity %}
+            <p>
+              <span class="veracity-badge band-{{ veracity.band }}">Veracidad {{ veracity.percent }}% · {{ veracity.band_label }}</span>
+              <span class="muted">Puntuación de revisión, no prueba de autenticidad{% if veracity_weights_version %} · pesos {{ veracity_weights_version }}{% endif %}</span>
+            </p>
+            {% if veracity_items %}
+              <ul class="veracity-breakdown">
+                {% for item in veracity_items %}
+                  <li>
+                    <strong>{{ item.label }}</strong>: {{ item.percent }}%
+                    {% if item.weakest %}<span class="warn">(componente más débil)</span>{% endif %}
+                  </li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+          {% else %}
+            <p class="muted">Veracidad no disponible.</p>
+          {% endif %}
+          {% endif %}
 
           {% if certificate.verification_status != "none" or can_review %}
             <h3>Verificación en origen</h3>
@@ -347,6 +383,7 @@
             <a class="button" href="{% url 'documents:history' document.pk %}">Ver historial</a>
             {% if can_review %}<a class="button" href="{% url 'documents:field_aliases' %}">Aliases de campos</a>{% endif %}
             {% if can_review %}<a class="button" href="{% url 'documents:format_profiles' %}">Perfiles de formato</a>{% endif %}
+            {% if can_review %}<a class="button" href="{% url 'documents:verifier_configs' %}">Verificadores</a>{% endif %}
             {% if document.paperless_document_id %}
               <a class="button" href="{% url 'documents:original' document.pk %}" target="_blank" rel="noopener">Abrir original</a>
             {% endif %}
