@@ -83,7 +83,7 @@ def test_multi_file_upload_within_limits_is_accepted(client, monkeypatch):
         calls.append((filename, len(data)))
         return IntakeResult(None, duplicate=False)
 
-    monkeypatch.setattr("documents.views.process_upload", fake_process_upload)
+    monkeypatch.setattr("documents.views.uploads.process_upload", fake_process_upload)
 
     user = User.objects.create_user("uploader", password="password")
     group, _ = Group.objects.get_or_create(name="admin")

@@ -334,7 +334,7 @@ def test_internal_endpoint_is_idempotent(monkeypatch, settings):
             ocr_client=ocr,
         )
 
-    monkeypatch.setattr("documents.views.acquire_text", fake_acquire)
+    monkeypatch.setattr("documents.views.internal.acquire_text", fake_acquire)
     client = Client()
     url = reverse("internal-document-text", args=[document.pk])
 

@@ -469,7 +469,7 @@ def test_invalid_state_is_refused():
 
 def _patch_llm(monkeypatch, llm):
     monkeypatch.setattr(
-        "documents.views.extract_certificate",
+        "documents.views.internal.extract_certificate",
         lambda document: extract_certificate(document, llm=llm, store=FakeStore()),
     )
 
@@ -667,9 +667,7 @@ def test_student_name_fallback_rejects_boilerplate():
     add_page(
         document,
         1,
-        "Obtained by\n"
-        "CERTIFICATE OF ENGLISH ASSESSMENT\n"
-        "quote",
+        "Obtained by\nCERTIFICATE OF ENGLISH ASSESSMENT\nquote",
     )
     data = payload_dict(
         student_name={"value": None, "evidence": None, "confidence": None},
@@ -701,9 +699,7 @@ def test_bad_literal_evidence_keeps_value_marked_unverified():
 def test_score_fallback_fills_empty_score():
     document = make_document()
     add_page(document, 1, PAGE_TEXT + "\nOverall Score\n80 /100\n")
-    data = payload_dict(
-        score={"value": None, "evidence": None, "confidence": None}
-    )
+    data = payload_dict(score={"value": None, "evidence": None, "confidence": None})
     llm = FakeLlm([json.dumps(data)])
 
     extract_certificate(document, llm=llm, store=FakeStore())
@@ -715,7 +711,11 @@ def test_score_fallback_fills_empty_score():
 
 def test_issue_date_fallback_fills_empty_dates():
     document = make_document()
-    add_page(document, 1, "Cambridge English B2 First CERT-123 English quote text\nDate of issue: 5 May 2024")
+    add_page(
+        document,
+        1,
+        "Cambridge English B2 First CERT-123 English quote text\nDate of issue: 5 May 2024",
+    )
     data = payload_dict(dates=[])
     llm = FakeLlm([json.dumps(data)])
 
@@ -804,10 +804,7 @@ def test_harvest_skips_birth_dates_and_implausible_years():
     add_page(
         document,
         1,
-        "Date of birth: 03/04/1990\n"
-        "Born 1990-04-03\n"
-        "Issued 12/05/2024\n"
-        "0399\n",
+        "Date of birth: 03/04/1990\nBorn 1990-04-03\nIssued 12/05/2024\n0399\n",
     )
     data = payload_dict(dates=[])
     llm = FakeLlm([json.dumps(data)])

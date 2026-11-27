@@ -235,7 +235,7 @@ def test_document_original_streams_from_paperless():
     document = make_document()
 
     pdf_bytes = b"%PDF-1.4 fake"
-    with patch("documents.views.build_document_store") as build_store:
+    with patch("documents.views.browse.build_document_store") as build_store:
         store = build_store.return_value
         store.download_original.return_value = pdf_bytes
         response = client.get(reverse("documents:original", args=[document.pk]))
@@ -264,7 +264,7 @@ def test_document_thumbnail_streams_from_paperless():
     document = make_document()
 
     webp_bytes = b"RIFF\x00\x00\x00\x00WEBP"
-    with patch("documents.views.build_document_store") as build_store:
+    with patch("documents.views.browse.build_document_store") as build_store:
         store = build_store.return_value
         store.download_thumbnail.return_value = webp_bytes
         response = client.get(reverse("documents:thumbnail", args=[document.pk]))
@@ -284,7 +284,7 @@ def test_document_thumbnail_serves_cache_hit_without_paperless():
     document = make_document(fingerprint="a1" * 32)
 
     webp_bytes = b"RIFF\x00\x00\x00\x00WEBP"
-    with patch("documents.views.build_document_store") as build_store:
+    with patch("documents.views.browse.build_document_store") as build_store:
         store = build_store.return_value
         store.download_thumbnail.return_value = webp_bytes
         first = client.get(reverse("documents:thumbnail", args=[document.pk]))
@@ -307,7 +307,7 @@ def test_document_thumbnail_refetches_on_version_change():
     client.force_login(viewer)
     document = make_document(fingerprint="a2" * 32)
 
-    with patch("documents.views.build_document_store") as build_store:
+    with patch("documents.views.browse.build_document_store") as build_store:
         store = build_store.return_value
         store.download_thumbnail.return_value = b"RIFF\x00\x00\x00\x00WEBP"
         client.get(reverse("documents:thumbnail", args=[document.pk]))
@@ -330,7 +330,7 @@ def test_document_thumbnail_returns_placeholder_on_paperless_failure():
     client.force_login(viewer)
     document = make_document(fingerprint="a3" * 32)
 
-    with patch("documents.views.build_document_store") as build_store:
+    with patch("documents.views.browse.build_document_store") as build_store:
         store = build_store.return_value
         store.download_thumbnail.side_effect = PaperlessError("down")
         response = client.get(reverse("documents:thumbnail", args=[document.pk]))

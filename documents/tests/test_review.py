@@ -659,7 +659,7 @@ def test_reprocess_with_confirmation_calls_service(monkeypatch):
     make_certificate(document)
     calls = []
 
-    import documents.views as views_module
+    import documents.views.review as views_module
 
     def fake_reprocess(doc, user):
         calls.append(doc.pk)
@@ -721,9 +721,7 @@ def test_validate_clears_all_unverified_marks():
     client = Client()
     client.force_login(reviewer)
     document = make_document()
-    certificate = make_certificate(
-        document, unverified_fields=["score_literal", "issue_date"]
-    )
+    certificate = make_certificate(document, unverified_fields=["score_literal", "issue_date"])
 
     client.post(reverse("documents:validate", args=[document.pk]))
 
@@ -787,7 +785,7 @@ def test_reextract_runs_pipeline_and_records_event(monkeypatch):
     certificate = make_certificate(document)
     calls = []
 
-    import documents.views as views_module
+    import documents.views.review as views_module
 
     def fake_extract(doc):
         calls.append("extract")
@@ -824,7 +822,7 @@ def test_reextract_preserves_manual_fields(monkeypatch):
         document, student_name="Manual Name", manual_fields=["student_name"]
     )
 
-    import documents.views as views_module
+    import documents.views.review as views_module
 
     def fake_extract(doc):
         Document.objects.filter(pk=doc.pk).update(
@@ -833,9 +831,7 @@ def test_reextract_preserves_manual_fields(monkeypatch):
         return type("R", (), {"error": "", "skipped": False})()
 
     monkeypatch.setattr(views_module, "extract_certificate", fake_extract)
-    monkeypatch.setattr(
-        views_module, "classify_certificate", lambda doc: None
-    )
+    monkeypatch.setattr(views_module, "classify_certificate", lambda doc: None)
 
     client.post(reverse("documents:re_extract", args=[document.pk]))
 
