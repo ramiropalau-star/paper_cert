@@ -206,9 +206,7 @@ class FormatProfile(TimestampedModel):
     document frequency within the cohort.
     """
 
-    entity = models.ForeignKey(
-        Entity, related_name="format_profiles", on_delete=models.CASCADE
-    )
+    entity = models.ForeignKey(Entity, related_name="format_profiles", on_delete=models.CASCADE)
     exam = models.ForeignKey(
         Exam,
         related_name="format_profiles",

@@ -86,9 +86,7 @@ def add_page(document: Document, text: str, number: int = 1) -> None:
 
 
 BOILERPLATE = (
-    "cambridge assessment english\n"
-    "this is to certify that\n"
-    "certificate of proficiency in english"
+    "cambridge assessment english\nthis is to certify that\ncertificate of proficiency in english"
 )
 
 
@@ -116,9 +114,12 @@ def test_learn_is_idempotent():
     learn_from_certificate(cert, user)
     second = learn_from_certificate(cert, user)
 
-    assert EntityAlias.objects.filter(
-        normalized_alias=normalize_catalog_text("Cambridge ESOL Exams")
-    ).count() == 1
+    assert (
+        EntityAlias.objects.filter(
+            normalized_alias=normalize_catalog_text("Cambridge ESOL Exams")
+        ).count()
+        == 1
+    )
     assert second["aliases_created"] == []
 
 
@@ -139,9 +140,7 @@ def test_learn_alias_conflict_is_skipped():
 
 def test_learn_creates_exam_for_unknown_literal():
     document = make_document()
-    cert = resolved_certificate(
-        document, exam_literal="KET for Schools", exam=None
-    )
+    cert = resolved_certificate(document, exam_literal="KET for Schools", exam=None)
     cert.exam = None
     cert.save()
 
@@ -155,9 +154,7 @@ def test_learn_creates_exam_for_unknown_literal():
 def test_learn_equivalence_creates_review_rule():
     exam = Exam.objects.get(entity__name="Cambridge English", name="B2 First")
     document = make_document()
-    cert = resolved_certificate(
-        document, exam=exam, exam_literal="B2 First", equivalence="A2"
-    )
+    cert = resolved_certificate(document, exam=exam, exam_literal="B2 First", equivalence="A2")
 
     outcome = learn_from_certificate(cert, make_user())
 
@@ -307,14 +304,16 @@ def test_format_profile_isolated_by_year():
     add_page(old_doc2, old_text)
     add_page(new_doc2, new_text)
 
-    for doc, year in (
-        (old_doc, 2020), (old_doc2, 2020), (new_doc, 2024), (new_doc2, 2024)
-    ):
+    for doc, year in ((old_doc, 2020), (old_doc2, 2020), (new_doc, 2024), (new_doc2, 2024)):
         cert = _approved_certificate(doc, year=year)
         learn_format_profile(cert)
 
-    old_profile = FormatProfile.objects.get(entity__name="Cambridge English", year=2020, exam__isnull=True)
-    new_profile = FormatProfile.objects.get(entity__name="Cambridge English", year=2024, exam__isnull=True)
+    old_profile = FormatProfile.objects.get(
+        entity__name="Cambridge English", year=2020, exam__isnull=True
+    )
+    new_profile = FormatProfile.objects.get(
+        entity__name="Cambridge English", year=2024, exam__isnull=True
+    )
     old_texts = {a["text"] for a in old_profile.anchors}
     new_texts = {a["text"] for a in new_profile.anchors}
     assert "old layout marker phrase" in old_texts
@@ -325,13 +324,15 @@ def test_format_profile_isolated_by_year():
 def test_format_score_high_for_matching_document():
     docs = []
     for i in range(2):
-        doc = make_document(fingerprint=f"{i+10}" * 64)
+        doc = make_document(fingerprint=f"{i + 10}" * 64)
         add_page(doc, BOILERPLATE)
         cert = _approved_certificate(doc)
         learn_format_profile(cert)
         docs.append(doc)
 
-    probe_doc = make_document(fingerprint="9" * 64, processing_state=Document.ProcessingState.PENDING_REVIEW)
+    probe_doc = make_document(
+        fingerprint="9" * 64, processing_state=Document.ProcessingState.PENDING_REVIEW
+    )
     add_page(probe_doc, BOILERPLATE + "\nsome student name here")
     probe = resolved_certificate(probe_doc)
 
@@ -378,9 +379,7 @@ def test_classification_blends_format_score_and_flags_mismatch():
         score_literal="180",
         issue_date=None,
         date_texts={
-            "candidates": [
-                {"text": "12 May 2024", "role": "issue", "page": 1, "quote": "q"}
-            ]
+            "candidates": [{"text": "12 May 2024", "role": "issue", "page": 1, "quote": "q"}]
         },
     )
 
@@ -407,9 +406,7 @@ def test_detail_shows_format_score_and_cohort():
     client.force_login(user)
 
     document = make_document()
-    cert = resolved_certificate(
-        document, format_score=0.83, format_cohort="Cambridge English 2024"
-    )
+    resolved_certificate(document, format_score=0.83, format_cohort="Cambridge English 2024")
 
     response = client.get(reverse("documents:detail", args=[document.pk]))
 
@@ -432,12 +429,13 @@ def test_learn_from_history_command_is_idempotent():
     cmd("learn_from_history", verbosity=0)
     cmd("learn_from_history", verbosity=0)
 
-    assert EntityAlias.objects.filter(
-        normalized_alias=normalize_catalog_text("Cambridge ESOL Exams")
-    ).count() == 1
-    assert ReviewEvent.objects.filter(
-        event_type=ReviewEvent.EventType.LEARN
-    ).count() == 1
+    assert (
+        EntityAlias.objects.filter(
+            normalized_alias=normalize_catalog_text("Cambridge ESOL Exams")
+        ).count()
+        == 1
+    )
+    assert ReviewEvent.objects.filter(event_type=ReviewEvent.EventType.LEARN).count() == 1
 
 
 def test_learn_from_history_dry_run_writes_nothing():

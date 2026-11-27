@@ -11,7 +11,6 @@ from django.urls import reverse
 from catalog.models import (
     Entity,
     EntityAlias,
-    Equivalence,
     Exam,
     ExamAlias,
     Language,
@@ -79,18 +78,14 @@ def test_resolve_entity_assigns_fk_alias_and_event():
     certificate = make_certificate(document)
     entity = Entity.objects.create(name="Universitat de València")
 
-    outcome = resolve_catalog_field(
-        certificate, "entity", entity, actor, reclassify=False
-    )
+    outcome = resolve_catalog_field(certificate, "entity", entity, actor, reclassify=False)
 
     assert outcome.ok
     certificate.refresh_from_db()
     assert certificate.entity == entity
     assert certificate.entity_literal == "UV"
     assert "entity" in certificate.manual_fields
-    assert EntityAlias.objects.filter(
-        entity=entity, normalized_alias="uv"
-    ).exists()
+    assert EntityAlias.objects.filter(entity=entity, normalized_alias="uv").exists()
     event = ReviewEvent.objects.get(certificate=certificate)
     assert event.event_type == ReviewEvent.EventType.EDIT
     assert event.before == {"entity": None}
@@ -115,9 +110,7 @@ def test_resolve_reports_alias_conflict_without_reassigning():
     EntityAlias.objects.create(entity=other, alias="UV")
     target = Entity.objects.create(name="Universitat de València")
 
-    outcome = resolve_catalog_field(
-        certificate, "entity", target, actor, reclassify=False
-    )
+    outcome = resolve_catalog_field(certificate, "entity", target, actor, reclassify=False)
 
     assert outcome.ok
     assert outcome.alias_conflict == "UV"
@@ -141,17 +134,13 @@ def test_resolve_exam_scoped_and_language_alias():
     exam = Exam.objects.create(entity=entity, name="Altres", language=language)
     lang = Language.objects.get(code="val")
 
-    outcome_exam = resolve_catalog_field(
-        certificate, "exam", exam, actor, reclassify=False
-    )
+    outcome_exam = resolve_catalog_field(certificate, "exam", exam, actor, reclassify=False)
     assert outcome_exam.ok
     certificate.refresh_from_db()
     assert certificate.exam == exam
     assert ExamAlias.objects.filter(exam=exam).count() == 1
 
-    outcome_lang = resolve_catalog_field(
-        certificate, "language", lang, actor, reclassify=False
-    )
+    outcome_lang = resolve_catalog_field(certificate, "language", lang, actor, reclassify=False)
     assert outcome_lang.ok
     certificate.refresh_from_db()
     assert certificate.language == lang
@@ -324,9 +313,7 @@ def test_resolve_post_language_existing():
     client = Client()
     client.force_login(make_user("rev-lang", ("reviewer",)))
     document = make_document()
-    certificate = make_certificate(
-        document, language_literal="Valencià", language=None
-    )
+    certificate = make_certificate(document, language_literal="Valencià", language=None)
     lang = Language.objects.get(code="val")
 
     response = client.post(
@@ -342,9 +329,7 @@ def test_resolve_post_language_existing():
     assert response.status_code == 302
     certificate.refresh_from_db()
     assert certificate.language == lang
-    assert LanguageAlias.objects.filter(
-        language=lang, normalized_alias="valencià"
-    ).exists()
+    assert LanguageAlias.objects.filter(language=lang, normalized_alias="valencià").exists()
 
 
 def test_resolve_post_viewer_forbidden():
@@ -481,13 +466,11 @@ def test_detail_embeds_initial_state_for_poll_guard():
     client = Client()
     client.force_login(make_user("view-poll", ("reviewer",)))
     processing = make_document(fingerprint="8" * 64, processing_state="stored")
-    settled = make_document(
-        fingerprint="7" * 64, processing_state="pending_review"
-    )
+    settled = make_document(fingerprint="7" * 64, processing_state="pending_review")
 
     response = client.get(reverse("documents:detail", args=[processing.pk]))
-    assert 'initialState = "stored"'.encode() in response.content
+    assert b'initialState = "stored"' in response.content
     assert b"/status/" in response.content
 
     response = client.get(reverse("documents:detail", args=[settled.pk]))
-    assert 'initialState = "pending_review"'.encode() in response.content
+    assert b'initialState = "pending_review"' in response.content

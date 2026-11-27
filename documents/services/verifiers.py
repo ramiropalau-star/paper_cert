@@ -20,8 +20,9 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 from django.utils import timezone
@@ -86,15 +87,11 @@ def _csv_get_verify(certificate: Certificate) -> VerificationOutcome:
     if response is None:
         return VerificationOutcome(False, error or "unreachable", evidence)
 
-    body = response.content[:MAX_RESPONSE_BYTES].decode(
-        "utf-8", errors="replace"
-    ).lower()
+    body = response.content[:MAX_RESPONSE_BYTES].decode("utf-8", errors="replace").lower()
     evidence["body_snippet"] = body[:400]
     for marker in _SUCCESS_MARKERS:
         if marker in body:
-            return VerificationOutcome(
-                True, f"success_marker:{marker}", evidence
-            )
+            return VerificationOutcome(True, f"success_marker:{marker}", evidence)
     return VerificationOutcome(False, "no_success_marker", evidence)
 
 
@@ -175,9 +172,7 @@ def verify_at_source(certificate: Certificate) -> Certificate:
     are recorded in ``verification_evidence`` and the status stays
     ``self_reported``.
     """
-    if certificate.verification_status == (
-        Certificate.VerificationStatus.MANUALLY_CONFIRMED
-    ):
+    if certificate.verification_status == (Certificate.VerificationStatus.MANUALLY_CONFIRMED):
         return certificate
     if not certificate.verification_url:
         return certificate
@@ -198,9 +193,7 @@ def verify_at_source(certificate: Certificate) -> Certificate:
     }
     certificate.verification_evidence = evidence
     if outcome.ok:
-        certificate.verification_status = (
-            Certificate.VerificationStatus.VERIFIED_AT_SOURCE
-        )
+        certificate.verification_status = Certificate.VerificationStatus.VERIFIED_AT_SOURCE
         certificate.verified_at = timezone.now()
         certificate.verified_by = None
     certificate.save(

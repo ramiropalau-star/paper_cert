@@ -255,18 +255,33 @@ LITERAL_FIELDS = {
 _NAME_TITLE_TOKENS = frozenset(
     {
         # Spanish / Catalan
-        "sr", "sra", "srta", "doña", "dña", "señor", "señora",
-        "senyor", "senyora",
+        "sr",
+        "sra",
+        "srta",
+        "doña",
+        "dña",
+        "señor",
+        "señora",
+        "senyor",
+        "senyora",
         # English
-        "mr", "mrs", "ms", "miss", "mx",
+        "mr",
+        "mrs",
+        "ms",
+        "miss",
+        "mx",
         # French
-        "mme", "mlle",
+        "mme",
+        "mlle",
         # German
-        "herr", "frau",
+        "herr",
+        "frau",
         # Portuguese
-        "senhor", "senhora",
+        "senhor",
+        "senhora",
         # Italian
-        "signor", "signora",
+        "signor",
+        "signora",
     }
 )
 
@@ -312,9 +327,7 @@ def _alias_hint_section(alias_map: dict[str, list[str]]) -> str:
         return ""
     return (
         "Additional known labels for this document (configured aliases — "
-        "treat them as valid label variants for their field):\n"
-        + "\n".join(lines)
-        + "\n\n"
+        "treat them as valid label variants for their field):\n" + "\n".join(lines) + "\n\n"
     )
 
 
@@ -327,8 +340,7 @@ def build_messages(
         {
             "role": "user",
             "content": (
-                hint
-                + "Extract the certificate data from the following document "
+                hint + "Extract the certificate data from the following document "
                 "text and answer with JSON matching the schema.\n\n"
                 "<document>\n"
                 f"{text}\n"
@@ -431,9 +443,7 @@ def _persist_certificate(
         for attribute in manual:
             if attribute in defaults:
                 defaults[attribute] = getattr(existing, attribute)
-    defaults["unverified_fields"] = sorted(
-        set(unverified_fields or ()) - manual
-    )
+    defaults["unverified_fields"] = sorted(set(unverified_fields or ()) - manual)
 
     certificate, _created = Certificate.objects.update_or_create(
         document=document, defaults=defaults
@@ -564,9 +574,7 @@ def _fallback_student_name(
     and small models miss the mapping. The match must be a clean
     person-name line, so headers and signature blocks are rejected.
     """
-    labels = _NAME_LABELS + tuple(
-        _norm_text(alias) for alias in extra_labels if alias.strip()
-    )
+    labels = _NAME_LABELS + tuple(_norm_text(alias) for alias in extra_labels if alias.strip())
     for page_number in sorted(page_texts):
         lines = page_texts[page_number].splitlines()
         for index, line in enumerate(lines):
@@ -663,10 +671,7 @@ def _fallback_score(
 ) -> FieldValue | None:
     """Recover an overall score the model missed (e.g. ``80 /100``)."""
     alias_res = tuple(
-        re.compile(
-            re.escape(_alias_fold(alias))
-            + r"[^\d\n]{0,40}(\d{1,3}(?:[.,]\d{1,2})?)"
-        )
+        re.compile(re.escape(_alias_fold(alias)) + r"[^\d\n]{0,40}(\d{1,3}(?:[.,]\d{1,2})?)")
         for alias in alias_labels
         if alias.strip()
     )
@@ -708,9 +713,7 @@ def _fallback_issue_date(
     """Recover an issue date printed near an issue label."""
     alias_res = [a for a in alias_labels if a.strip()]
     alias_label_re = (
-        re.compile("|".join(re.escape(_alias_fold(a)) for a in alias_res))
-        if alias_res
-        else None
+        re.compile("|".join(re.escape(_alias_fold(a)) for a in alias_res)) if alias_res else None
     )
     for page_number in sorted(page_texts):
         text = page_texts[page_number]
@@ -748,7 +751,9 @@ def _fallback_issue_date(
                         text=match.group(0),
                         role="issue",
                         page=page_number,
-                        quote=_line_for(folded_text, label.end() + match.start(), label.end() + match.end()),
+                        quote=_line_for(
+                            folded_text, label.end() + match.start(), label.end() + match.end()
+                        ),
                     )
     return None
 
@@ -838,8 +843,7 @@ def build_focus_messages(
         {
             "role": "user",
             "content": (
-                hint
-                + "A previous extraction of this certificate missed the following "
+                hint + "A previous extraction of this certificate missed the following "
                 f"data: {', '.join(missing)}.\n"
                 "Search the document text again and return JSON matching the "
                 "schema with ONLY those fields filled (every other field null "
@@ -861,9 +865,7 @@ def _merge_focus(payload: ExtractionPayload, focused: ExtractionPayload) -> None
         if not (target.value or "").strip() and (source.value or "").strip():
             setattr(payload, name, source)
     known = {candidate.text for candidate in payload.dates}
-    payload.dates.extend(
-        candidate for candidate in focused.dates if candidate.text not in known
-    )
+    payload.dates.extend(candidate for candidate in focused.dates if candidate.text not in known)
 
 
 def _call_model(
@@ -1019,8 +1021,7 @@ def extract_certificate(
                 )
                 _merge_focus(payload, focused)
                 unverified_attrs |= {
-                    LITERAL_FIELDS[name]
-                    for name in _validate_evidence(payload, page_texts)
+                    LITERAL_FIELDS[name] for name in _validate_evidence(payload, page_texts)
                 }
             except Exception as exc:
                 logger.info(

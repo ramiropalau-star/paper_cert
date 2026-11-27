@@ -324,6 +324,17 @@ def test_parse_date_text_month_year_stays_ambiguous():
     assert parsed is None and ambiguous is True
 
 
+def test_month_name_table_has_no_conflicting_duplicates():
+    from documents.services.months import _MONTH_NAMES, MONTH_NUMBERS, _fold
+
+    folded: dict[str, int] = {}
+    for name, number in _MONTH_NAMES.items():
+        key = _fold(name).rstrip(".")
+        assert folded.setdefault(key, number) == number, f"conflict on {name!r}"
+    assert len(MONTH_NUMBERS) == len({_fold(name).rstrip(".") for name in _MONTH_NAMES})
+    assert all(1 <= number <= 12 for number in MONTH_NUMBERS.values())
+
+
 def test_dates_assigned_to_distinct_fields_with_originals():
     document = make_document()
     certificate = make_certificate(

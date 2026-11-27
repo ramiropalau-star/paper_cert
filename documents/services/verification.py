@@ -15,8 +15,6 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
-from django.utils import timezone
-
 from documents.models import Certificate
 
 logger = logging.getLogger(__name__)
@@ -96,7 +94,7 @@ def _find_code(page_texts: dict[int, str]) -> tuple[str, str]:
             match = pattern.search(text)
             if match:
                 code = match.group(1).strip().rstrip(".,;")
-                line = text[max(0, match.start() - 40): match.end() + 40]
+                line = text[max(0, match.start() - 40) : match.end() + 40]
                 return code, " ".join(line.split())
     return "", ""
 
@@ -108,8 +106,8 @@ def _find_url(page_texts: dict[int, str]) -> tuple[str, str]:
     mentions verification/csv, bare known verifier domain.
     """
     labeled_re = re.compile(
-        rf"(?:url\s+verif|verify\s+at|verifica(?:r|ció)\s+en|en)"
-        rf"[\s:–—-]*(https?://[^\s)\]>\"'”’]+)",
+        r"(?:url\s+verif|verify\s+at|verifica(?:r|ció)\s+en|en)"
+        r"[\s:–—-]*(https?://[^\s)\]>\"'”’]+)",
         re.IGNORECASE,
     )
     for page_number in sorted(page_texts):
@@ -117,7 +115,7 @@ def _find_url(page_texts: dict[int, str]) -> tuple[str, str]:
         match = labeled_re.search(text)
         if match:
             return _clean_url(match.group(1)), " ".join(
-                text[max(0, match.start() - 40): match.end() + 40].split()
+                text[max(0, match.start() - 40) : match.end() + 40].split()
             )
     for page_number in sorted(page_texts):
         text = page_texts[page_number] or ""
@@ -138,7 +136,7 @@ def _find_url(page_texts: dict[int, str]) -> tuple[str, str]:
                 raw = tail.group(0).strip().rstrip(".,;)")
                 if raw.lower().startswith(domain):
                     return _clean_url(f"https://{raw}"), " ".join(
-                        text[max(0, idx - 40): idx + len(raw) + 40].split()
+                        text[max(0, idx - 40) : idx + len(raw) + 40].split()
                     )[:300]
     return "", ""
 
@@ -195,9 +193,7 @@ def apply_verification_artifacts(
     if certificate.verification_status == Certificate.VerificationStatus.MANUALLY_CONFIRMED:
         pass
     elif artifacts.found:
-        certificate.verification_status = (
-            Certificate.VerificationStatus.SELF_REPORTED
-        )
+        certificate.verification_status = Certificate.VerificationStatus.SELF_REPORTED
     else:
         certificate.verification_status = Certificate.VerificationStatus.NONE
         certificate.verified_by = None

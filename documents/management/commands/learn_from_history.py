@@ -73,9 +73,7 @@ class Command(BaseCommand):
                 outcome = self._learn_one(certificate, dry_run=dry_run)
             except Exception as exc:  # keep the backfill going per certificate
                 totals["errors"] += 1
-                self.stdout.write(
-                    self.style.WARNING(f"  certificate {certificate.pk}: {exc}")
-                )
+                self.stdout.write(self.style.WARNING(f"  certificate {certificate.pk}: {exc}"))
                 continue
             totals["aliases"] += len(outcome["aliases_created"])
             totals["exams"] += len(outcome["exams_created"])

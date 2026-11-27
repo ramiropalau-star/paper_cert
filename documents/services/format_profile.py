@@ -90,11 +90,7 @@ def _anchors_for_cohort(certs: list[Certificate]) -> tuple[list[dict[str, Any]],
     for cert in certs:
         for line in _candidate_lines(cert.document):
             df[line] = df.get(line, 0) + 1
-    anchors = [
-        {"text": text, "df": count}
-        for text, count in df.items()
-        if count >= threshold
-    ]
+    anchors = [{"text": text, "df": count} for text, count in df.items() if count >= threshold]
     anchors.sort(key=lambda item: (-item["df"], item["text"]))
     return anchors[:MAX_ANCHORS], n
 
@@ -127,9 +123,7 @@ def learn_format_profile(certificate: Certificate) -> FormatProfile | None:
     with transaction.atomic():
         profile = _refresh_profile(certificate.entity_id, year, None)
         if certificate.exam_id is not None:
-            cohort = _cohort_certificates(
-                certificate.entity_id, year, certificate.exam_id
-            )
+            cohort = _cohort_certificates(certificate.entity_id, year, certificate.exam_id)
             if len(cohort) >= _min_exam_samples():
                 _refresh_profile(certificate.entity_id, year, certificate.exam_id)
     return profile
@@ -143,7 +137,9 @@ def _profile_anchor_map(profile: FormatProfile) -> dict[str, int]:
     }
 
 
-def _score_against(entity_id: int, lines: set[str], year: int | None, exam_id: int | None) -> tuple[float | None, str]:
+def _score_against(
+    entity_id: int, lines: set[str], year: int | None, exam_id: int | None
+) -> tuple[float | None, str]:
     """Score document lines against the best applicable profile of an entity.
 
     Preference order: exam-segmented cohort for the year, entity-level cohort
@@ -206,9 +202,7 @@ def score_document_format(certificate: Certificate) -> tuple[float | None, str]:
     if not lines:
         return None, ""
     year = certificate_year(certificate)
-    score, cohort = _score_against(
-        certificate.entity_id, lines, year, certificate.exam_id
-    )
+    score, cohort = _score_against(certificate.entity_id, lines, year, certificate.exam_id)
     if score is None:
         return None, cohort
 
@@ -228,17 +222,13 @@ def score_document_format(certificate: Certificate) -> tuple[float | None, str]:
     return score, cohort
 
 
-def rescore_entity_year(
-    entity_id: int, year: int, exam_id: int | None = None
-) -> int:
+def rescore_entity_year(entity_id: int, year: int, exam_id: int | None = None) -> int:
     """Recompute format scores for certificates of an entity cohort.
 
     Returns the number of certificates rescored. Used after a profile is
     deactivated/reactivated so stored scores reflect active profiles.
     """
-    certs = Certificate.objects.filter(entity_id=entity_id).select_related(
-        "document"
-    )
+    certs = Certificate.objects.filter(entity_id=entity_id).select_related("document")
     if exam_id is not None:
         certs = certs.filter(exam_id=exam_id)
     rescored = 0

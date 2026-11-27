@@ -2,15 +2,11 @@ import json
 
 import pytest
 from django.contrib.auth.models import Group, User
-from django.test import Client
 from django.urls import reverse
 
 from catalog.models import Entity
 from documents.models import Certificate, Document, DocumentPage, FieldLabelAlias
 from documents.services.extraction import (
-    ExtractionPayload,
-    FieldValue,
-    _fallback_student_name,
     build_messages,
     extract_certificate,
 )
@@ -43,7 +39,9 @@ def make_document(**overrides) -> Document:
 
 def add_page(document: Document, text: str) -> None:
     DocumentPage.objects.create(
-        document=document, page_number=1, text=text,
+        document=document,
+        page_number=1,
+        text=text,
         method=DocumentPage.Method.EMBEDDED,
     )
 
@@ -92,15 +90,11 @@ class FakeStore:
 
 def test_alias_normalization_and_dedup():
     user = make_user("u1")
-    created, message = teach_alias(
-        field="student_name", alias="  Test   Taker Name ", actor=user
-    )
+    created, message = teach_alias(field="student_name", alias="  Test   Taker Name ", actor=user)
     assert created is not None
     assert created.normalized_alias == "test taker name"
     assert created.scope_key == "global"
-    created2, message2 = teach_alias(
-        field="student_name", alias="test taker name", actor=user
-    )
+    created2, message2 = teach_alias(field="student_name", alias="test taker name", actor=user)
     assert created2 is None and "Ya existe" in message2
 
 
@@ -109,15 +103,14 @@ def test_aliases_for_document_scoped_and_global():
     other = Entity.objects.create(name="Other", is_active=True)
     user = make_user("u2")
     teach_alias(field="student_name", alias="Global Label", actor=user)
-    teach_alias(
-        field="student_name", alias="Scoped Label", actor=user, scope_entity=entity
-    )
-    teach_alias(
-        field="student_name", alias="Other Label", actor=user, scope_entity=other
-    )
+    teach_alias(field="student_name", alias="Scoped Label", actor=user, scope_entity=entity)
+    teach_alias(field="student_name", alias="Other Label", actor=user, scope_entity=other)
     FieldLabelAlias.objects.create(
-        field="student_name", alias="Inactive", scope_key="global",
-        normalized_alias="inactive", is_active=False,
+        field="student_name",
+        alias="Inactive",
+        scope_key="global",
+        normalized_alias="inactive",
+        is_active=False,
     )
 
     document = make_document()
@@ -140,12 +133,14 @@ def test_alias_drives_student_name_fallback():
     document = make_document()
     add_page(document, "CERTIFICATE\nNombre del Aspirante: Laura Pérez García\n")
     FieldLabelAlias.objects.create(
-        field="student_name", alias="Nombre del Aspirante",
-        normalized_alias="nombre del aspirante", scope_key="global",
+        field="student_name",
+        alias="Nombre del Aspirante",
+        normalized_alias="nombre del aspirante",
+        scope_key="global",
     )
     llm = FakeLlm([json.dumps(payload_dict())])
 
-    result = extract_certificate(document, llm=llm, store=FakeStore())
+    extract_certificate(document, llm=llm, store=FakeStore())
 
     certificate = Certificate.objects.get(document=document)
     assert certificate.student_name == "Laura Pérez García"
@@ -155,8 +150,10 @@ def test_alias_drives_issue_date_fallback():
     document = make_document()
     add_page(document, "Exámenes EUR\nFecha de expedició: 05/12/2020\n")
     FieldLabelAlias.objects.create(
-        field="issue_date", alias="Fecha de expedició",
-        normalized_alias="fecha de expedicio", scope_key="global",
+        field="issue_date",
+        alias="Fecha de expedició",
+        normalized_alias="fecha de expedicio",
+        scope_key="global",
     )
     llm = FakeLlm([json.dumps(payload_dict())])
 

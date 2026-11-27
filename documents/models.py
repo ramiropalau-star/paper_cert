@@ -161,6 +161,7 @@ class Certificate(models.Model):
     review_reasons = models.JSONField(default=list, blank=True)
     manual_fields = models.JSONField(default=list, blank=True)
     unverified_fields = models.JSONField(default=list, blank=True)
+
     class VerificationStatus(models.TextChoices):
         NONE = "none", "Sin datos de verificación"
         SELF_REPORTED = "self_reported", "Autodeclarado en el documento"
@@ -279,9 +280,7 @@ class FieldLabelAlias(models.Model):
         blank=True,
     )
     scope_key = models.CharField(max_length=50)
-    source = models.CharField(
-        max_length=10, choices=Source.choices, default=Source.MANUAL
-    )
+    source = models.CharField(max_length=10, choices=Source.choices, default=Source.MANUAL)
     is_active = models.BooleanField(default=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -310,7 +309,5 @@ class FieldLabelAlias(models.Model):
         from catalog.normalization import normalize_alias_text
 
         self.normalized_alias = normalize_alias_text(self.alias)
-        self.scope_key = (
-            "global" if self.scope_entity_id is None else str(self.scope_entity_id)
-        )
+        self.scope_key = "global" if self.scope_entity_id is None else str(self.scope_entity_id)
         super().save(*args, **kwargs)

@@ -107,9 +107,7 @@ def apply_manual_edit(
         certificate.manual_fields = sorted(manual)
         certificate.save()
         unverified = [
-            field
-            for field in (certificate.unverified_fields or [])
-            if field not in changes
+            field for field in (certificate.unverified_fields or []) if field not in changes
         ]
         if unverified != (certificate.unverified_fields or []):
             certificate.unverified_fields = unverified

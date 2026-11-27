@@ -12,7 +12,7 @@ from django.db import IntegrityError
 
 from catalog.models import Entity
 from catalog.normalization import normalize_alias_text
-from documents.models import Certificate, Document, FieldLabelAlias
+from documents.models import Document, FieldLabelAlias
 
 # Alias injection is capped so the prompt and fallbacks stay bounded.
 MAX_ALIASES_PER_FIELD = 20

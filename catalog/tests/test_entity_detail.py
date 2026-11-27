@@ -164,15 +164,11 @@ def test_entity_writes_require_reviewer():
         == 403
     )
     assert (
-        client.post(
-            reverse("catalog:alias_add", args=[entity.pk]), {"alias": "X"}
-        ).status_code
+        client.post(reverse("catalog:alias_add", args=[entity.pk]), {"alias": "X"}).status_code
         == 403
     )
     assert (
-        client.post(
-            reverse("catalog:exam_create", args=[entity.pk]), {"name": "X"}
-        ).status_code
+        client.post(reverse("catalog:exam_create", args=[entity.pk]), {"name": "X"}).status_code
         == 403
     )
 

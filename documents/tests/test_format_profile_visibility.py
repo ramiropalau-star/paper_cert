@@ -3,11 +3,10 @@ from datetime import date
 import pytest
 from django.contrib.auth.models import Group, User
 from django.core.management import call_command
-from django.test import Client
 from django.urls import reverse
 
 from catalog.models import Entity, FormatProfile
-from documents.filters import doubtful_format_q, filter_documents
+from documents.filters import filter_documents
 from documents.models import Certificate, Document, DocumentPage
 from documents.services.format_profile import (
     rescore_entity_year,
@@ -63,7 +62,9 @@ def make_certificate(document: Document, **overrides) -> Certificate:
 
 def add_page(document: Document, text: str) -> None:
     DocumentPage.objects.create(
-        document=document, page_number=1, text=text,
+        document=document,
+        page_number=1,
+        text=text,
         method=DocumentPage.Method.EMBEDDED,
     )
 
@@ -110,16 +111,11 @@ def test_doubtful_q_annotation_in_list(client):
     viewer = make_user("vf", ("viewer",))
     entity = Entity.objects.get(name="Cambridge English")
     make_profile(entity)
-    low = make_certificate(
-        make_document(fingerprint="5" * 64), format_score=0.1
-    )
+    low = make_certificate(make_document(fingerprint="5" * 64), format_score=0.1)
     client.force_login(viewer)
     response = client.get(reverse("documents:list"))
     assert response.status_code == 200
-    row = next(
-        d for d in response.context["page"].object_list
-        if d.certificate.pk == low.pk
-    )
+    row = next(d for d in response.context["page"].object_list if d.certificate.pk == low.pk)
     assert row.format_doubtful is True
 
 
@@ -170,9 +166,7 @@ def test_format_profile_list_roles_and_actions(client):
 
     client.force_login(viewer)
     assert client.get(url).status_code == 403
-    response = client.post(
-        url, {"action": "deactivate", "profile_id": profile.pk}
-    )
+    response = client.post(url, {"action": "deactivate", "profile_id": profile.pk})
     assert response.status_code == 403
 
     client.force_login(reviewer)

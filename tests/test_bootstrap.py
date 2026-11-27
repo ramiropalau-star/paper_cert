@@ -39,10 +39,13 @@ def test_strong_password_creates_superuser():
 
 
 def test_weak_password_bypass_with_override():
-    with _env(
-        DJANGO_SUPERUSER_PASSWORD="admin",
-        BOOTSTRAP_ALLOW_WEAK_PASSWORD="1",
-    ), mock.patch(f"{COMMAND}.call_command"):
+    with (
+        _env(
+            DJANGO_SUPERUSER_PASSWORD="admin",
+            BOOTSTRAP_ALLOW_WEAK_PASSWORD="1",
+        ),
+        mock.patch(f"{COMMAND}.call_command"),
+    ):
         call_command("bootstrap")
     assert get_user_model().objects.filter(username="admin").exists()
 

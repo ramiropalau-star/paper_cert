@@ -86,7 +86,7 @@ def _learn_exam(certificate: Certificate, outcome: dict[str, Any]) -> None:
     )
     if clash or not normalized:
         return
-    exam = Exam.objects.create(
+    Exam.objects.create(
         name=name,
         entity_id=certificate.entity_id,
         language_id=certificate.language_id,

@@ -348,8 +348,7 @@ def _resolve_candidates(field: str, certificate, query: str):
         qs = Exam.objects.filter(is_active=True, entity_id=certificate.entity_id)
         if certificate.language_id is not None:
             qs = qs.filter(
-                models.Q(language_id=certificate.language_id)
-                | models.Q(language__isnull=True)
+                models.Q(language_id=certificate.language_id) | models.Q(language__isnull=True)
             )
         if query:
             qs = qs.filter(
@@ -391,14 +390,10 @@ def catalog_resolve(request):
         messages.error(request, "Campo de catálogo no válido.")
         return redirect("documents:detail", pk=document.pk)
 
-    literal = " ".join(
-        (getattr(certificate, f"{field}_literal") or "").split()
-    )
+    literal = " ".join((getattr(certificate, f"{field}_literal") or "").split())
     exam_blocked = field == "exam" and certificate.entity_id is None
     query = request.GET.get("q", "")
-    candidates = (
-        _resolve_candidates(field, certificate, query) if not exam_blocked else []
-    )
+    candidates = _resolve_candidates(field, certificate, query) if not exam_blocked else []
     return render(
         request,
         "catalog/resolve.html",
@@ -466,9 +461,7 @@ def _catalog_resolve_post(request):
                 "entrada; no se reasignó.",
             )
         if outcome.reclassify_error:
-            messages.warning(
-                request, f"No se pudo reclasificar: {outcome.reclassify_error}"
-            )
+            messages.warning(request, f"No se pudo reclasificar: {outcome.reclassify_error}")
     else:
         messages.error(request, outcome.error)
     return redirect("documents:detail", pk=document.pk)
@@ -480,9 +473,7 @@ def _resolve_query(document, field: str) -> str:
 
 def _resolve_create_new(request, certificate, field: str, reclassify: bool):
     """Create a catalog entry prefilled from the printed literal, then resolve."""
-    literal = " ".join(
-        (getattr(certificate, f"{field}_literal") or "").split()
-    )
+    literal = " ".join((getattr(certificate, f"{field}_literal") or "").split())
     name = " ".join((request.POST.get("name") or "").split()) or literal
     if not name:
         return ResolutionOutcome(ok=False, error="El nombre no puede estar vacío.")
@@ -505,10 +496,6 @@ def _resolve_create_new(request, certificate, field: str, reclassify: bool):
             target.language = language
             target.save(update_fields=["language", "updated_at"])
     else:
-        return ResolutionOutcome(
-            ok=False, error="Los idiomas no se crean desde la resolución."
-        )
+        return ResolutionOutcome(ok=False, error="Los idiomas no se crean desde la resolución.")
 
-    return resolve_catalog_field(
-        certificate, field, target, request.user, reclassify=reclassify
-    )
+    return resolve_catalog_field(certificate, field, target, request.user, reclassify=reclassify)

@@ -29,16 +29,16 @@ from catalog.models import (
 from catalog.normalization import normalize_catalog_text
 from documents.models import Certificate, Document
 from documents.services.format_profile import score_document_format
+from documents.services.labels import (
+    apply_manual_review_label,
+    sync_classification_tags,
+)
 from documents.services.months import (
     DAY_MONTH_YEAR_RE,
     MONTH_DAY_YEAR_RE,
     MONTH_NAME_RE,
     MONTH_YEAR_RE,
     month_number,
-)
-from documents.services.labels import (
-    apply_manual_review_label,
-    sync_classification_tags,
 )
 from documents.services.paperless import DocumentStore
 from documents.services.review_reasons import merge_review_reasons
@@ -555,8 +555,7 @@ def aggregate_reasons(certificate: Certificate) -> list[str]:
     if (
         certificate.entity_id is not None
         and certificate.format_score is not None
-        and certificate.format_score
-        < float(settings.APP.get("format_score_threshold", 0.4))
+        and certificate.format_score < float(settings.APP.get("format_score_threshold", 0.4))
     ):
         reasons.append("format_mismatch")
     if missing:

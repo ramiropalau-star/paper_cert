@@ -1,6 +1,5 @@
 import pytest
 from django.contrib.auth.models import Group, User
-from django.test import Client
 from django.urls import reverse
 
 from documents.models import Certificate, Document, DocumentPage, ReviewEvent
@@ -127,7 +126,7 @@ def test_verify_at_source_success_marker(monkeypatch):
     class FakeResponse:
         status_code = 200
         headers = {"content-type": "text/html"}
-        content = "El documento s'ha verificat correctament".encode()
+        content = b"El documento s'ha verificat correctament"
         text = "El documento s'ha verificat correctament"
 
     monkeypatch.setattr(
@@ -242,10 +241,7 @@ def test_uv_verify_missing_document_id(monkeypatch):
     verify_at_source(certificate)
     certificate.refresh_from_db()
     assert certificate.verification_status == "self_reported"
-    assert (
-        certificate.verification_evidence["auto_check"]["detail"]
-        == "missing_document_id"
-    )
+    assert certificate.verification_evidence["auto_check"]["detail"] == "missing_document_id"
 
 
 def test_verify_source_view_roles_and_audit(client):
@@ -267,9 +263,7 @@ def test_verify_source_view_roles_and_audit(client):
     certificate.refresh_from_db()
     assert certificate.verification_status == "manually_confirmed"
     assert certificate.verified_by == reviewer
-    assert ReviewEvent.objects.filter(
-        certificate=certificate, event_type="verify"
-    ).exists()
+    assert ReviewEvent.objects.filter(certificate=certificate, event_type="verify").exists()
 
     client.post(url, {"action": "unconfirm"})
     certificate.refresh_from_db()
@@ -278,11 +272,11 @@ def test_verify_source_view_roles_and_audit(client):
 
 
 def test_extraction_stores_verification_artifacts():
+    import json
+
     from documents.services.extraction import (
-        ExtractionPayload,
         extract_certificate,
     )
-    import json
 
     document = Document.objects.create(
         fingerprint="w" * 64,
@@ -293,7 +287,9 @@ def test_extraction_stores_verification_artifacts():
         text_method=Document.TextMethod.EMBEDDED,
     )
     DocumentPage.objects.create(
-        document=document, page_number=1, text=GVA_TEXT,
+        document=document,
+        page_number=1,
+        text=GVA_TEXT,
         method=DocumentPage.Method.EMBEDDED,
     )
 
