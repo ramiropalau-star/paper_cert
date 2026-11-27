@@ -393,10 +393,15 @@ apply this checklist:
 
 ### Credentials
 
-- `deploy.sh` generates a random admin password on first deploy; retrieve it
-  from `.env` (`DJANGO_SUPERUSER_PASSWORD`, shared with
-  `PAPERLESS_ADMIN_PASSWORD`). Change it after first login via
-  `/users/` or the Paperless UI, and update `.env` accordingly.
+- `deploy.sh` generates a random admin password on first deploy, writes it
+  to `.env` (`DJANGO_SUPERUSER_PASSWORD`, shared with
+  `PAPERLESS_ADMIN_PASSWORD`) and shows it once in the final summary.
+  Change it after first login via `/users/` or the Paperless UI, and
+  update `.env` accordingly.
+- For a throwaway test deployment you may set
+  `DEPLOY_ADMIN_PASSWORD=admin`, but `manage.py bootstrap` will still
+  reject it unless you also set `BOOTSTRAP_ALLOW_WEAK_PASSWORD=1` in
+  `.env`. Never use this combination outside local testing.
 - `manage.py bootstrap` validates the superuser password with Django's
   password validators and refuses weak values. For local tests only, set
   `BOOTSTRAP_ALLOW_WEAK_PASSWORD=1`.
@@ -420,16 +425,18 @@ n8n.example.com {
 Then set in `.env` and recreate the app and n8n:
 
 ```dotenv
+APP_SCHEME=https                  # secure cookies, SSL redirect and HSTS follow automatically
 DJANGO_CSRF_TRUSTED_ORIGINS=https://app.example.com
 DJANGO_ALLOWED_HOSTS=app.example.com,localhost,127.0.0.1
-DJANGO_SECURE_COOKIES=true
-DJANGO_SECURE_SSL_REDIRECT=true   # only when the proxy sets X-Forwarded-Proto
 N8N_PROTOCOL=https
 N8N_SECURE_COOKIE=true
 ```
 
-`SECURE_PROXY_SSL_HEADER` is already configured, so Django trusts
-`X-Forwarded-Proto` from the proxy. Paperless-ngx stays internal; expose
+`APP_SCHEME=https` turns on `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`,
+`SECURE_SSL_REDIRECT`, and HSTS by default; the individual `DJANGO_SECURE_*`
+variables remain available as explicit overrides. `SECURE_PROXY_SSL_HEADER`
+is already configured, so Django trusts `X-Forwarded-Proto` from the proxy —
+only enable `SECURE_SSL_REDIRECT` when the proxy actually sets it. Paperless-ngx stays internal; expose
 its UI only via SSH tunnel or a separate authenticated proxy path.
 
 ### Exposure

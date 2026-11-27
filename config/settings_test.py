@@ -37,6 +37,7 @@ APP = {
     "n8n_processing_webhook_url": "http://n8n.test/webhook/process",
     "n8n_report_webhook_url": "http://n8n.test/webhook/report",
     "n8n_webhook_token": "test-n8n-token",
+    "inbox_settle_seconds": 0.0,
     "paperless_url": "http://paperless.test",
     "paperless_ui_url": "http://paperless-ui.test",
     "paperless_token": "test-paperless-token",

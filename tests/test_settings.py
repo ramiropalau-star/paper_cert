@@ -1,3 +1,9 @@
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 from config.settings import env_bool, read_app_settings
 
 
@@ -54,3 +60,77 @@ def test_env_bool_accepts_common_truthy_values():
     assert env_bool({"FLAG": "1"}, "FLAG")
     assert not env_bool({"FLAG": "false"}, "FLAG")
     assert env_bool({}, "FLAG", default=True)
+
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+_SECURITY_FLAGS_SNIPPET = (
+    "import json, config.settings as s;"
+    "print(json.dumps({"
+    "'cookies': s.SESSION_COOKIE_SECURE,"
+    "'csrf': s.CSRF_COOKIE_SECURE,"
+    "'redirect': s.SECURE_SSL_REDIRECT,"
+    "'hsts': s.SECURE_HSTS_SECONDS,"
+    "'hsts_sub': s.SECURE_HSTS_INCLUDE_SUBDOMAINS}))"
+)
+
+
+def _security_flags(env_overrides):
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith(("DJANGO_SECURE", "APP_SCHEME"))
+    }
+    env.update(env_overrides)
+    out = subprocess.run(
+        [sys.executable, "-c", _SECURITY_FLAGS_SNIPPET],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=_REPO_ROOT,
+        check=True,
+    )
+    return json.loads(out.stdout)
+
+
+def test_https_scheme_enables_transport_security():
+    flags = _security_flags({"APP_SCHEME": "https"})
+    assert flags == {
+        "cookies": True,
+        "csrf": True,
+        "redirect": True,
+        "hsts": 31536000,
+        "hsts_sub": True,
+    }
+
+
+def test_http_scheme_keeps_transport_security_off():
+    flags = _security_flags({"APP_SCHEME": "http"})
+    assert flags == {
+        "cookies": False,
+        "csrf": False,
+        "redirect": False,
+        "hsts": 0,
+        "hsts_sub": False,
+    }
+
+
+def test_invalid_scheme_falls_back_to_http():
+    flags = _security_flags({"APP_SCHEME": "ftp"})
+    assert flags["cookies"] is False
+    assert flags["redirect"] is False
+
+
+def test_explicit_secure_overrides_win_over_scheme():
+    flags = _security_flags(
+        {
+            "APP_SCHEME": "https",
+            "DJANGO_SECURE_COOKIES": "false",
+            "DJANGO_SECURE_SSL_REDIRECT": "false",
+            "DJANGO_SECURE_HSTS_SECONDS": "0",
+        }
+    )
+    assert flags["cookies"] is False
+    assert flags["csrf"] is False
+    assert flags["redirect"] is False
+    assert flags["hsts"] == 0

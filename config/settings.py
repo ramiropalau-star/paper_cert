@@ -78,6 +78,7 @@ def read_app_settings(environ: Mapping[str, str] | None = None) -> dict[str, obj
         "report_output_dir": source.get("APP_REPORT_OUTPUT_DIR", str(BASE_DIR / "var" / "reports")),
         "inbox_dir": source.get("APP_INBOX_DIR", str(BASE_DIR / "var" / "inbox")),
         "inbox_poll_seconds": env_float(source, "APP_INBOX_POLL_SECONDS", 10.0),
+        "inbox_settle_seconds": env_float(source, "APP_INBOX_SETTLE_SECONDS", 2.0),
         "paperless_sync_seconds": env_float(source, "APP_PAPERLESS_SYNC_SECONDS", 60.0),
         "sync_overlap_seconds": env_float(source, "APP_SYNC_OVERLAP_SECONDS", 600.0),
         "cache_dir": source.get("APP_CACHE_DIR", str(BASE_DIR / "var" / "cache")),
@@ -229,12 +230,23 @@ LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/accounts/login/"
 
+APP_SCHEME = os.environ.get("APP_SCHEME", "http").strip().lower()
+if APP_SCHEME not in {"http", "https"}:
+    APP_SCHEME = "http"
+_SCHEME_HTTPS = APP_SCHEME == "https"
+
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SAMESITE = "Lax"
-SESSION_COOKIE_SECURE = env_bool(os.environ, "DJANGO_SECURE_COOKIES", not DEBUG)
+SESSION_COOKIE_SECURE = env_bool(os.environ, "DJANGO_SECURE_COOKIES", _SCHEME_HTTPS)
 CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE
-SECURE_SSL_REDIRECT = env_bool(os.environ, "DJANGO_SECURE_SSL_REDIRECT", False)
+SECURE_SSL_REDIRECT = env_bool(os.environ, "DJANGO_SECURE_SSL_REDIRECT", _SCHEME_HTTPS)
+SECURE_HSTS_SECONDS = env_int(
+    os.environ, "DJANGO_SECURE_HSTS_SECONDS", 31536000 if _SCHEME_HTTPS else 0
+)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool(
+    os.environ, "DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", _SCHEME_HTTPS
+)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"

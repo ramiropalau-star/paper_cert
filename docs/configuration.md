@@ -13,8 +13,11 @@ first run.
 | `DJANGO_DEBUG` | `false` | Django debug mode. Never enable in production. |
 | `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1` | Comma-separated hostnames the app answers to. |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | empty | Extra CSRF-trusted origins (scheme + host). |
-| `DJANGO_SECURE_COOKIES` | `false` | `Secure` flag on session cookies; enable behind HTTPS. |
-| `DJANGO_SECURE_SSL_REDIRECT` | `false` | Redirect HTTP → HTTPS; enable behind a TLS proxy. |
+| `APP_SCHEME` | `http` | Public scheme (`http`/`https`); drives the transport-security defaults below. |
+| `DJANGO_SECURE_COOKIES` | follows `APP_SCHEME` | `Secure` flag on session/CSRF cookies; explicit override. |
+| `DJANGO_SECURE_SSL_REDIRECT` | follows `APP_SCHEME` | Redirect HTTP → HTTPS; explicit override. |
+| `DJANGO_SECURE_HSTS_SECONDS` | `31536000` on https, else `0` | HSTS max-age; explicit override. |
+| `DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS` | follows `APP_SCHEME` | HSTS includeSubDomains; explicit override. |
 | `APP_PORT` | `8080` | Host port published by the `app` service. |
 | `DJANGO_SUPERUSER_USERNAME/PASSWORD/EMAIL` | `admin` / … | Used once by `manage.py bootstrap`. |
 
@@ -129,6 +132,7 @@ See `docs/operations.md`.
 | --- | --- | --- |
 | `APP_INBOX_DIR` | `/data/inbox` | Watched folder (`./inbox` bind mount). |
 | `APP_INBOX_POLL_SECONDS` | `10` | Inbox poll interval. |
+| `APP_INBOX_SETTLE_SECONDS` | `2` | Seconds a file must keep stable size+mtime before intake reads it. |
 | `APP_RECOVERY_INTERVAL_SECONDS` | `60` | Watcher recovery loop interval (`0` disables). |
 | `APP_RECOVERY_STALE_SECONDS` | `1800` | Age before an item counts as stuck. |
 | `APP_RECOVERY_MAX_ATTEMPTS` | `3` | Attempts before `recovery_attempts_exhausted`. |

@@ -11,7 +11,7 @@ from __future__ import annotations
 import mimetypes
 from dataclasses import dataclass
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from documents.models import Document
 from documents.services.filetype import effective_name, sniffed_type
@@ -86,17 +86,22 @@ def ingest_paperless_document(
         if by_fingerprint is not None:
             return PaperlessIngestResult(by_fingerprint, duplicate=True)
 
-        with transaction.atomic():
-            document = Document.objects.create(
-                fingerprint=fingerprint,
-                original_filename=validated.filename,
-                content_type=validated.content_type,
-                size_bytes=len(validated.data),
-                page_count=validated.page_count,
-                paperless_document_id=document_id,
-                processing_state=Document.ProcessingState.STORED,
-                uploaded_by=user,
-            )
+        try:
+            with transaction.atomic():
+                document = Document.objects.create(
+                    fingerprint=fingerprint,
+                    original_filename=validated.filename,
+                    content_type=validated.content_type,
+                    size_bytes=len(validated.data),
+                    page_count=validated.page_count,
+                    paperless_document_id=document_id,
+                    processing_state=Document.ProcessingState.STORED,
+                    uploaded_by=user,
+                )
+        except IntegrityError:
+            # Concurrent intake created the same fingerprint first.
+            by_fingerprint = Document.objects.get(fingerprint=fingerprint)
+            return PaperlessIngestResult(by_fingerprint, duplicate=True)
     finally:
         if owns_store:
             store.close()

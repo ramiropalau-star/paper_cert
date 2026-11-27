@@ -15,6 +15,26 @@ from documents.services.validation import ALLOWED_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 
+# path -> (size, mtime_ns, first_seen_monotonic)
+_settle_seen: dict[str, tuple[int, int, float]] = {}
+
+
+def _is_settled(path: Path, settle_seconds: float, now: float) -> bool:
+    """True when the file's size and mtime stayed unchanged for the window."""
+    if settle_seconds <= 0:
+        return True
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    signature = (stat.st_size, stat.st_mtime_ns)
+    key = str(path)
+    seen = _settle_seen.get(key)
+    if seen is None or seen[:2] != signature:
+        _settle_seen[key] = (*signature, now)
+        return False
+    return now - seen[2] >= settle_seconds
+
 
 def _content_type(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
@@ -29,6 +49,11 @@ def scan_inbox_once(inbox_dir: Path | str | None = None) -> list[str]:
     failed_dir.mkdir(parents=True, exist_ok=True)
 
     handled: list[str] = []
+    settle_seconds = float(settings.APP.get("inbox_settle_seconds") or 0)
+    now = time.monotonic()
+    live_keys = {str(p) for p in root.iterdir() if p.is_file()}
+    for stale in set(_settle_seen) - live_keys:
+        _settle_seen.pop(stale, None)
     for path in sorted(root.iterdir()):
         if not path.is_file():
             continue
@@ -36,6 +61,8 @@ def scan_inbox_once(inbox_dir: Path | str | None = None) -> list[str]:
         # Extensionless files are still tried: validation sniffs the bytes
         # and assigns the right extension.
         if suffix and suffix not in ALLOWED_EXTENSIONS:
+            continue
+        if not _is_settled(path, settle_seconds, now):
             continue
         try:
             data = path.read_bytes()

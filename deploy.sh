@@ -7,7 +7,11 @@
 # Optional env overrides:
 #   DEPLOY_HOST=192.168.1.50     public IP/hostname (default: auto-detect)
 #   DEPLOY_ADMIN_PASSWORD=...  Django + Paperless admin password.
-#                               Default: randomly generated (written only to .env)
+#                               Default: randomly generated, written to .env
+#                               and shown once in the final summary.
+#                               Test-only weak password (e.g. admin) requires
+#                               DEPLOY_ADMIN_PASSWORD=admin plus
+#                               BOOTSTRAP_ALLOW_WEAK_PASSWORD=1 in .env.
 #   SKIP_MODEL=1                 skip the Ollama model pull
 #   SKIP_SMOKE=1                 skip the end-to-end smoke test
 #   FORCE_ENV=1                  regenerate .env even if it exists
@@ -61,7 +65,13 @@ FREE_GB=$(df -BG --output=avail . | tail -1 | tr -dc '0-9')
 HOST="${DEPLOY_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
 [ -n "$HOST" ] || die "No se pudo detectar la IP; definí DEPLOY_HOST"
 # Sin override se genera una password fuerte: nunca se usa un default conocido.
-ADMIN_PASS="${DEPLOY_ADMIN_PASSWORD:-$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)}"
+ADMIN_PASS_GENERATED=0
+if [ -n "${DEPLOY_ADMIN_PASSWORD:-}" ]; then
+  ADMIN_PASS="$DEPLOY_ADMIN_PASSWORD"
+else
+  ADMIN_PASS="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24)"
+  ADMIN_PASS_GENERATED=1
+fi
 log "Host detectado: $HOST"
 
 # ------------------------------------------------------- GPU NVIDIA (opcional)
@@ -111,6 +121,9 @@ if [ ! -f .env ] || [ "${FORCE_ENV:-0}" = "1" ]; then
 else
   log ".env ya existe — se respeta (FORCE_ENV=1 para regenerar)"
 fi
+
+# .env contains secrets: keep it readable only by the owner.
+chmod 600 .env
 
 # Puerto publicado de la app: única fuente para health check y banner.
 # Default 8080, igual que .env.example y compose.yaml.
@@ -305,5 +318,14 @@ cat <<EOF
    Paperless UI:   http://$HOST:9090               ($PAPERLESS_USER / ver .env)
    n8n:            http://127.0.0.1:5678  (solo loopback — N8N_BIND_ADDR para LAN/proxy)
    Inbox folder:   ./inbox/  (copiá archivos ahí)
+EOF
+
+if [ "$ADMIN_PASS_GENERATED" = "1" ]; then
+  cat <<EOF
+   Password admin autogenerada (guardala, no se vuelve a mostrar):
+   $ADMIN_PASS
 ============================================================
 EOF
+else
+  echo "============================================================"
+fi

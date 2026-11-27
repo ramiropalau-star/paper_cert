@@ -1,12 +1,14 @@
 import pytest
 from django.contrib.auth.models import Group, User
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import IntegrityError
 from django.urls import reverse
 
 from documents.models import Document
-from documents.services.intake import process_upload
+from documents.services.intake import fingerprint_bytes, process_upload
 from documents.services.paperless import PaperlessError
 from documents.services.staging import staged_upload
+from documents.services.validation import validate_upload
 from documents.tests.factories import pdf_bytes
 
 pytestmark = pytest.mark.django_db
@@ -91,6 +93,93 @@ def test_paperless_failure_is_persisted_as_error_state():
     assert "Paperless unavailable" in result.document.error_reason
 
 
+def test_concurrent_duplicate_converges_on_existing_document(monkeypatch):
+    payload = pdf_bytes()
+    validated = validate_upload(payload, "certificate.pdf", "application/pdf")
+    fingerprint = fingerprint_bytes(validated.data)
+    winner = Document.objects.create(
+        fingerprint=fingerprint,
+        original_filename="certificate.pdf",
+        content_type="application/pdf",
+        size_bytes=len(validated.data),
+        processing_state=Document.ProcessingState.STORED,
+        paperless_document_id="42",
+    )
+
+    # Simulate the race: the existence check misses, then the insert loses.
+    monkeypatch.setattr(Document.objects, "filter", lambda *a, **k: Document.objects.none())
+    monkeypatch.setattr(
+        Document.objects,
+        "create",
+        lambda **kwargs: (_ for _ in ()).throw(IntegrityError("duplicate key")),
+    )
+    monkeypatch.setattr(Document.objects, "get", lambda **kwargs: winner)
+
+    result = process_upload(payload, "certificate.pdf", "application/pdf")
+
+    assert result.duplicate is True
+    assert result.document.pk == winner.pk
+    assert result.error == ""
+
+
+def test_upload_retries_storage_for_error_document_without_paperless_id():
+    payload = pdf_bytes()
+    validated = validate_upload(payload, "certificate.pdf", "application/pdf")
+    stuck = Document.objects.create(
+        fingerprint=fingerprint_bytes(validated.data),
+        original_filename="certificate.pdf",
+        content_type="application/pdf",
+        size_bytes=len(validated.data),
+        processing_state=Document.ProcessingState.ERROR,
+        error_reason="Paperless unavailable",
+    )
+    fake = FakeStore()
+
+    result = process_upload(payload, "certificate.pdf", "application/pdf", store=fake)
+
+    assert result.duplicate is True
+    assert result.error == ""
+    stuck.refresh_from_db()
+    assert stuck.processing_state == Document.ProcessingState.STORED
+    assert stuck.paperless_document_id == "42"
+    assert stuck.error_reason == ""
+    assert Document.objects.count() == 1
+
+
+def test_upload_retry_failure_keeps_document_in_error():
+    payload = pdf_bytes()
+    validated = validate_upload(payload, "certificate.pdf", "application/pdf")
+    stuck = Document.objects.create(
+        fingerprint=fingerprint_bytes(validated.data),
+        original_filename="certificate.pdf",
+        content_type="application/pdf",
+        size_bytes=len(validated.data),
+        processing_state=Document.ProcessingState.ERROR,
+        error_reason="Paperless unavailable",
+    )
+    fake = FakeStore(error=PaperlessError("still down", retryable=True))
+
+    result = process_upload(payload, "certificate.pdf", "application/pdf", store=fake)
+
+    assert result.error_code == "paperless_error"
+    stuck.refresh_from_db()
+    assert stuck.processing_state == Document.ProcessingState.ERROR
+    assert stuck.paperless_document_id == ""
+    assert "still down" in stuck.error_reason
+
+
+def test_duplicate_of_healthy_document_does_not_retouch_storage():
+    payload = pdf_bytes()
+    first = process_upload(payload, "certificate.pdf", "application/pdf", store=FakeStore())
+    second_store = FakeStore()
+
+    second = process_upload(payload, "copy.pdf", "application/pdf", store=second_store)
+
+    assert second.duplicate is True
+    assert second.document.pk == first.document.pk
+    assert second_store.paths == []
+
+
 def test_staging_file_names_are_random_and_cleaned():
     paths = []
     with staged_upload(pdf_bytes(), "certificate.pdf") as first:
@@ -165,7 +254,7 @@ def test_delete_allowed_for_admin(client, monkeypatch):
         paperless_document_id="42",
     )
     fake = FakeStore()
-    monkeypatch.setattr("documents.views.build_document_store", lambda: fake)
+    monkeypatch.setattr("documents.views.uploads.build_document_store", lambda: fake)
     client.force_login(admin)
 
     response = client.post(reverse("documents:delete", args=[document.pk]))

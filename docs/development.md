@@ -27,10 +27,13 @@ DB_ENGINE=sqlite DJANGO_DEBUG=true .venv/bin/python manage.py runserver
 
 ```bash
 .venv/bin/ruff check .
-.venv/bin/pytest
+.venv/bin/ruff format --check .
+.venv/bin/pytest            # serial
+.venv/bin/pytest -n auto    # parallel (pytest-xdist)
+.venv/bin/pytest --cov=.    # coverage report (pytest-cov)
 ```
 
-`pytest.ini` selects `config.settings_test`, which uses in-memory SQLite, a temporary media root, and fake service URLs. External services are mocked with `respx`; no Paperless, n8n, Ollama, or OCR container is needed for unit tests.
+`pytest.ini` selects `config.settings_test`, which uses in-memory SQLite, a temporary media root, and fake service URLs. External services are mocked with `respx`; no Paperless, n8n, Ollama, or OCR container is needed for unit tests. CI (`.github/workflows/ci.yml`) runs `ruff check`, `ruff format --check`, and `pytest -n auto` on every push and pull request.
 
 ## Layout
 

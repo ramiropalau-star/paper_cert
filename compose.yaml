@@ -77,7 +77,7 @@ services:
     # y para acceso remoto usar un túnel SSH o un reverse proxy.
     networks: [internal]
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/ >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/readyz >/dev/null || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 10

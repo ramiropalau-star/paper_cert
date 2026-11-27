@@ -6,7 +6,7 @@ from django.contrib.auth.decorators import login_required
 from django.urls import include, path
 
 from core.internal import internal_health
-from core.views import health, home
+from core.views import health, home, ready
 from documents.views import (
     internal_acquire_text,
     internal_classify,
@@ -17,6 +17,7 @@ from reports.views import internal_run_report
 
 urlpatterns = [
     path("healthz", health, name="health"),
+    path("readyz", ready, name="ready"),
     path(
         "accounts/login/",
         auth_views.LoginView.as_view(template_name="registration/login.html"),

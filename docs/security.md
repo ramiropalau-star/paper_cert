@@ -67,11 +67,15 @@ Do not expose `/internal/` outside the internal Docker network.
 - `CsrfViewMiddleware` protects all session-authenticated POST requests.
 - Session cookies are `HttpOnly` and `SameSite=Lax`.
 - CSRF cookies are `SameSite=Lax`.
-- `SESSION_COOKIE_SECURE` and `CSRF_COOKIE_SECURE` default to enabled when
-  `DEBUG` is false, and can be overridden with `DJANGO_SECURE_COOKIES`.
-- `SECURE_SSL_REDIRECT`, `SECURE_CONTENT_TYPE_NOSNIFF`,
-  `SECURE_REFERRER_POLICY`, and `X_FRAME_OPTIONS=DENY` are configured in
-  `config/settings.py`.
+- `SESSION_COOKIE_SECURE` and `CSRF_COOKIE_SECURE` follow `APP_SCHEME`:
+  enabled when `APP_SCHEME=https`, disabled for `http`. Explicit
+  `DJANGO_SECURE_COOKIES` overrides the scheme default.
+- `SECURE_SSL_REDIRECT` defaults to the `APP_SCHEME` value (override with
+  `DJANGO_SECURE_SSL_REDIRECT`), and HSTS
+  (`SECURE_HSTS_SECONDS=31536000` plus include-subdomains) is enabled
+  automatically when `APP_SCHEME=https`.
+- `SECURE_CONTENT_TYPE_NOSNIFF`, `SECURE_REFERRER_POLICY`, and
+  `X_FRAME_OPTIONS=DENY` are configured in `config/settings.py`.
 
 ## Upload and request limits
 
